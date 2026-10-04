@@ -1,5 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Crypto from 'expo-crypto';
+import { AiKeys, AiProvider, BUILTIN_PROVIDERS, ChatMsg, Sheet } from './ai';
 import {
   Chat, Conversation, MESSAGES, Report, SEED_CONVERSATIONS, SEED_REPORTS, TEMPLATES, TODAY, summarize,
 } from './data';
@@ -10,7 +12,15 @@ export type Route =
   | { name: 'messages'; query?: string }
   | { name: 'reports' }
   | { name: 'report'; id: string }
-  | { name: 'settings' };
+  | { name: 'settings' }
+  | { name: 'api' }
+  | { name: 'sheet' }
+  | { name: 'agent' };
+
+export interface User {
+  email: string;
+  name: string;
+}
 
 export interface Credentials {
   productId: string;
@@ -55,12 +65,53 @@ interface Persisted {
   settings: Settings;
   reports: Report[];
   convs: Conversation[];
+  aiKeys: AiKeys;
+  aiCustom: AiProvider[];
 }
 
-const KEY = 'carereach:v1';
+// Everything below is stored per account (keyed by email).
+const dataKey = (email: string) => `carereach:v2:${email}`;
+const sheetKey = (email: string) => `carereach:sheet:${email}`;
+const USERS_KEY = 'bz_users';
+const SESSION_KEY = 'bz_session';
+const GOOGLE_KEY = 'bz_google_client';
+
+type UserRecord = { name: string; salt: string; hash: string };
+
+async function readJson<T>(key: string, fallback: T): Promise<T> {
+  try {
+    const raw = await AsyncStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as T) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+const writeJson = (key: string, value: unknown) => AsyncStorage.setItem(key, JSON.stringify(value)).catch(() => {});
+
+const hashPassword = (pw: string, salt: string) =>
+  Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, salt + pw);
 
 interface Store {
   ready: boolean;
+  user: User | null;
+  /** Each returns an error message, or null on success. */
+  signUp: (name: string, email: string, password: string) => Promise<string | null>;
+  logIn: (email: string, password: string) => Promise<string | null>;
+  loginWithProfile: (u: User) => Promise<void>;
+  logOut: () => void;
+  googleClient: string;
+  setGoogleClient: (id: string) => void;
+  aiKeys: AiKeys;
+  aiCustom: AiProvider[];
+  providers: AiProvider[];
+  saveAiKey: (id: string, key: string, model: string) => void;
+  addAiProvider: (p: Omit<AiProvider, 'id' | 'custom' | 'kind'>) => void;
+  removeAiProvider: (id: string) => void;
+  sheet: Sheet | null;
+  setSheet: (s: Sheet | null) => void;
+  chat: ChatMsg[];
+  setChat: React.Dispatch<React.SetStateAction<ChatMsg[]>>;
   creds: Credentials | null;
   connect: (c: Credentials) => void;
   disconnect: () => void;
@@ -87,36 +138,132 @@ const nowHHMM = () => {
 };
 
 export function StoreProvider({ children }: { children: React.ReactNode }) {
-  const [ready, setReady] = useState(false);
+  const [booted, setBooted] = useState(false); // saved login read
+  const [ready, setReady] = useState(false); // this account's data loaded
+  const [user, setUser] = useState<User | null>(null);
+  const [googleClient, setGoogleClientState] = useState('');
   const [creds, setCreds] = useState<Credentials | null>(null);
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const [reports, setReports] = useState<Report[]>(SEED_REPORTS);
   const [convs, setConvs] = useState<Conversation[]>(SEED_CONVERSATIONS);
+  const [aiKeys, setAiKeys] = useState<AiKeys>({});
+  const [aiCustom, setAiCustom] = useState<AiProvider[]>([]);
+  const [sheet, setSheetState] = useState<Sheet | null>(null);
+  const [chat, setChat] = useState<ChatMsg[]>([]);
   const [route, setRoute] = useState<Route>({ name: 'dashboard' });
   const [toast, setToast] = useState<string | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Load saved state once.
+  // 1) Who was logged in last time?
   useEffect(() => {
-    AsyncStorage.getItem(KEY)
-      .then((raw) => {
-        if (!raw) return;
-        const p: Persisted = JSON.parse(raw);
-        setCreds(p.creds);
-        setSettings({ ...DEFAULT_SETTINGS, ...p.settings });
-        if (p.reports?.length) setReports(p.reports);
-        if (p.convs?.length) setConvs(p.convs);
-      })
-      .catch(() => {})
-      .finally(() => setReady(true));
+    Promise.all([readJson<User | null>(SESSION_KEY, null), readJson<string>(GOOGLE_KEY, '')]).then(([u, g]) => {
+      setUser(u);
+      setGoogleClientState(g);
+      setBooted(true);
+    });
   }, []);
 
-  // Save on change (after the first load).
+  // 2) Load that account's data (or start clean when logged out).
+  const email = user?.email;
   useEffect(() => {
-    if (!ready) return;
-    const data: Persisted = { creds, settings, reports, convs };
-    AsyncStorage.setItem(KEY, JSON.stringify(data)).catch(() => {});
-  }, [ready, creds, settings, reports, convs]);
+    if (!booted) return;
+    let cancelled = false;
+    setReady(false);
+    (async () => {
+      if (!email) {
+        setCreds(null); setSettings(DEFAULT_SETTINGS); setReports(SEED_REPORTS); setConvs(SEED_CONVERSATIONS);
+        setAiKeys({}); setAiCustom([]); setSheetState(null); setChat([]);
+      } else {
+        const p = await readJson<Partial<Persisted>>(dataKey(email), {});
+        const sh = await readJson<Sheet | null>(sheetKey(email), null);
+        if (cancelled) return;
+        setCreds(p.creds ?? null);
+        setSettings({ ...DEFAULT_SETTINGS, ...p.settings });
+        setReports(p.reports?.length ? p.reports : SEED_REPORTS);
+        setConvs(p.convs?.length ? p.convs : SEED_CONVERSATIONS);
+        setAiKeys(p.aiKeys ?? {});
+        setAiCustom(p.aiCustom ?? []);
+        setSheetState(sh);
+        setChat([]);
+        setRoute({ name: 'dashboard' });
+      }
+      if (!cancelled) setReady(true);
+    })();
+    return () => { cancelled = true; };
+  }, [booted, email]);
+
+  // 3) Save on change (only once this account's data has loaded).
+  useEffect(() => {
+    if (!ready || !email) return;
+    const data: Persisted = { creds, settings, reports, convs, aiKeys, aiCustom };
+    writeJson(dataKey(email), data);
+  }, [ready, email, creds, settings, reports, convs, aiKeys, aiCustom]);
+
+  const setSheet = useCallback((sh: Sheet | null) => {
+    setSheetState(sh);
+    if (!email) return;
+    // Large sheets can exceed browser storage; the sheet stays usable for this session either way.
+    if (sh) writeJson(sheetKey(email), sh);
+    else AsyncStorage.removeItem(sheetKey(email)).catch(() => {});
+  }, [email]);
+
+  // ---- accounts (stored on this device only) ----
+  const loginWithProfile = useCallback(async (u: User) => {
+    await writeJson(SESSION_KEY, u);
+    setUser(u);
+  }, []);
+
+  const signUp = useCallback(async (name: string, em: string, password: string) => {
+    const key = em.trim().toLowerCase();
+    const users = await readJson<Record<string, UserRecord>>(USERS_KEY, {});
+    if (users[key]) return 'This email is already registered. Please log in.';
+    const salt = Array.from(Crypto.getRandomBytes(8)).map((b) => b.toString(16).padStart(2, '0')).join('');
+    users[key] = { name: name.trim() || key, salt, hash: await hashPassword(password, salt) };
+    await writeJson(USERS_KEY, users);
+    await loginWithProfile({ email: key, name: users[key].name });
+    return null;
+  }, [loginWithProfile]);
+
+  const logIn = useCallback(async (em: string, password: string) => {
+    const key = em.trim().toLowerCase();
+    const users = await readJson<Record<string, UserRecord>>(USERS_KEY, {});
+    const u = users[key];
+    if (!u || u.hash !== (await hashPassword(password, u.salt))) return 'Email or password is wrong.';
+    await loginWithProfile({ email: key, name: u.name });
+    return null;
+  }, [loginWithProfile]);
+
+  const logOut = useCallback(() => {
+    AsyncStorage.removeItem(SESSION_KEY).catch(() => {});
+    setUser(null);
+  }, []);
+
+  const setGoogleClient = useCallback((id: string) => {
+    setGoogleClientState(id);
+    writeJson(GOOGLE_KEY, id);
+  }, []);
+
+  // ---- AI providers ----
+  const providers = useMemo(() => BUILTIN_PROVIDERS.concat(aiCustom), [aiCustom]);
+
+  const saveAiKey = useCallback((id: string, key: string, model: string) => {
+    setAiKeys((all) => {
+      const next = { ...all };
+      const base = BUILTIN_PROVIDERS.find((p) => p.id === id)?.model ?? 'default';
+      if (key.trim()) next[id] = { key: key.trim(), model: model.trim() || base };
+      else delete next[id];
+      return next;
+    });
+  }, []);
+
+  const addAiProvider = useCallback((p: Omit<AiProvider, 'id' | 'custom' | 'kind'>) => {
+    setAiCustom((list) => [...list, { ...p, id: `c_${Date.now()}`, kind: 'openai', custom: true }]);
+  }, []);
+
+  const removeAiProvider = useCallback((id: string) => {
+    setAiCustom((list) => list.filter((c) => c.id !== id));
+    setAiKeys((all) => { const next = { ...all }; delete next[id]; return next; });
+  }, []);
 
   const showToast = useCallback((m: string) => {
     setToast(m);
@@ -166,10 +313,12 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
   const value = useMemo<Store>(
     () => ({
-      ready, creds, connect, disconnect, route, go: setRoute, settings, updateSettings, reports,
+      ready, user, signUp, logIn, loginWithProfile, logOut, googleClient, setGoogleClient, aiKeys, aiCustom, providers,
+      saveAiKey, addAiProvider, removeAiProvider, sheet, setSheet, chat, setChat, creds, connect, disconnect, route, go: setRoute, settings, updateSettings, reports,
       generateReport, convs, unreadCount, openConversation, sendChat, toast, showToast,
     }),
-    [ready, creds, connect, disconnect, route, settings, updateSettings, reports, generateReport, convs,
+    [ready, user, signUp, logIn, loginWithProfile, logOut, googleClient, setGoogleClient, aiKeys, aiCustom, providers,
+      saveAiKey, addAiProvider, removeAiProvider, sheet, setSheet, chat, creds, connect, disconnect, route, settings, updateSettings, reports, generateReport, convs,
       unreadCount, openConversation, sendChat, toast, showToast],
   );
 

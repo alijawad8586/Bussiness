@@ -163,6 +163,10 @@ export function Field({
   );
 }
 
+export function Input(props: TextInputProps) {
+  return <TextInput placeholderTextColor={colors.placeholder} {...props} style={[s.plainInput, props.style]} />;
+}
+
 export function Toggle({ value, onChange }: { value: boolean; onChange: (v: boolean) => void }) {
   return (
     <Switch
@@ -276,5 +280,6 @@ const s = StyleSheet.create({
   backdrop: { flex: 1, backgroundColor: 'rgba(17,27,33,0.45)', alignItems: 'center', justifyContent: 'center', padding: 16 },
   sheet: { backgroundColor: '#fff', overflow: 'hidden' },
   sheetHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 18, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: colors.border },
+  plainInput: { height: 40, paddingHorizontal: 12, borderRadius: 8, borderWidth: 1, borderColor: colors.border, backgroundColor: '#fff', fontSize: 13, color: colors.text, ...({ outlineStyle: 'none' } as object) },
   track: { height: 6, borderRadius: 3, backgroundColor: colors.track, overflow: 'hidden' },
 });

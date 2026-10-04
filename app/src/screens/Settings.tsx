@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Pressable, View } from 'react-native';
-import * as DocumentPicker from 'expo-document-picker';
+import { pickSheet } from '../sheet';
 import { colors, font, statusColors } from '../theme';
 import { TEMPLATES } from '../data';
 import { Button, Card, CardHeading, Icon, Select, Sheet, SheetIcon, T, Toggle, useLayout } from '../components/ui';
@@ -26,20 +26,12 @@ function ago(ts: number) {
   return h < 24 ? `${h} h ago` : `${Math.round(h / 24)} d ago`;
 }
 
-/** Reads a CSV's header and row count. Other file types keep the default columns. */
-async function readCsv(uri: string) {
-  const text = await (await fetch(uri)).text();
-  const lines = text.split(/\r?\n/).filter((l) => l.trim());
-  const columns = (lines[0] ?? '').split(',').map((c) => c.replace(/^"|"$/g, '').trim()).filter(Boolean);
-  return { columns, rows: Math.max(0, lines.length - 1) };
-}
-
 function guess(columns: string[], hints: string[], fallback: string) {
   return columns.find((c) => hints.some((h) => c.toLowerCase().includes(h))) ?? fallback;
 }
 
 export default function Settings() {
-  const { settings, updateSettings, generateReport, go, showToast } = useStore();
+  const { settings, updateSettings, generateReport, go, showToast, setSheet } = useStore();
   const { wide } = useLayout();
   const [draft, setDraft] = useState<SettingsT>(settings);
   const [confirm, setConfirm] = useState(false);
@@ -54,22 +46,13 @@ export default function Settings() {
 
   const pickFile = async () => {
     try {
-      const res = await DocumentPicker.getDocumentAsync({
-        type: ['text/csv', 'text/comma-separated-values', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/vnd.ms-excel'],
-        copyToCacheDirectory: true,
-      });
-      if (res.canceled) return;
-      const f = res.assets[0];
-      let columns = DEFAULT_COLUMNS;
-      let rows = settings.rows;
-      if (/\.csv$/i.test(f.name)) {
-        const r = await readCsv(f.uri);
-        if (r.columns.length) { columns = r.columns; rows = r.rows; }
-      } else {
-        showToast('Excel file added. Using default column names.');
-      }
+      const picked = await pickSheet();
+      if (!picked) return;
+      setSheet(picked); // also available on the Upload Sheet and Agent AI pages
+      const columns = picked.rows[0].map((c) => c.trim()).filter(Boolean);
+      const rows = Math.max(0, picked.rows.length - 1);
       applySource({
-        source: 'upload', fileName: f.name, rows, columns, lastSynced: Date.now(),
+        source: 'upload', fileName: picked.name, rows, columns, lastSynced: Date.now(),
         mapping: {
           phone: guess(columns, ['phone', 'mobile', 'number'], columns[0]),
           patient: guess(columns, ['name', 'patient'], columns[1] ?? columns[0]),
@@ -77,7 +60,7 @@ export default function Settings() {
           time: guess(columns, ['time', 'date', 'appointment'], columns[3] ?? columns[0]),
         },
       });
-      showToast(`${f.name} loaded · ${rows.toLocaleString()} rows`);
+      showToast(`${picked.name} loaded · ${rows.toLocaleString()} rows`);
     } catch {
       showToast('Could not read that file');
     }
