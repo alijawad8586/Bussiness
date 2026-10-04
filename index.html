@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bussiness AI</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<!-- PAGE 1: Sign up / Login -->
+<main id="authPage" class="auth hidden">
+  <div class="card">
+    <h1>Bussiness AI</h1>
+    <p class="muted">Sign up or login to continue</p>
+    <div class="tabs">
+      <button id="tabLogin" class="tab active" type="button">Login</button>
+      <button id="tabSignup" class="tab" type="button">Sign up</button>
+    </div>
+    <form id="authForm" autocomplete="on">
+      <label id="nameRow" class="hidden">Name<input id="name" type="text" autocomplete="name"></label>
+      <label>Email<input id="email" type="email" required autocomplete="email"></label>
+      <label>Password<input id="password" type="password" required minlength="6" autocomplete="current-password"></label>
+      <button id="authSubmit" class="btn primary" type="submit">Login</button>
+      <p id="authError" class="error"></p>
+    </form>
+    <div class="divider"><span>or</span></div>
+    <div id="googleBtn"></div>
+    <button id="googleFallback" class="btn" type="button">Continue with Google</button>
+  </div>
+</main>
+
+<!-- APP: sidebar + pages -->
+<div id="app" class="app hidden">
+  <aside class="sidebar">
+    <div class="brand">Bussiness AI</div>
+    <nav>
+      <button class="nav active" data-page="settings">⚙️ Settings · API Cloud</button>
+      <button class="nav" data-page="sheet">📄 Upload Sheet</button>
+      <button class="nav" data-page="agent">🤖 Agent AI</button>
+    </nav>
+    <div class="user">
+      <div id="userLabel" class="muted"></div>
+      <button id="logout" class="btn small" type="button">Logout</button>
+    </div>
+  </aside>
+
+  <section class="content">
+    <!-- Settings / API Cloud -->
+    <div id="page-settings" class="page">
+      <h2>API Cloud</h2>
+      <p class="muted">Apni AI ki API key yahan daalo (Gemini, ChatGPT, Claude, Groq ya koi aur). Keys sirf is browser mein save hoti hain.</p>
+      <div id="providers"></div>
+      <h3>Add custom AI (OpenAI-compatible)</h3>
+      <div class="row">
+        <input id="cName" placeholder="Name (e.g. DeepSeek)">
+        <input id="cUrl" placeholder="Base URL (e.g. https://api.deepseek.com/v1)">
+        <input id="cModel" placeholder="Model (e.g. deepseek-chat)">
+        <button id="cAdd" class="btn" type="button">Add</button>
+      </div>
+      <h3>Google Sign-In (optional)</h3>
+      <p class="muted">Google login ke liye apna Google OAuth Client ID yahan daalo.</p>
+      <div class="row">
+        <input id="gClient" placeholder="xxxx.apps.googleusercontent.com">
+        <button id="gSave" class="btn" type="button">Save</button>
+      </div>
+    </div>
+
+    <!-- Upload Sheet -->
+    <div id="page-sheet" class="page hidden">
+      <h2>Upload Sheet</h2>
+      <p class="muted">CSV ya Excel (.xlsx/.xls) file upload karo. Agent AI is data ko use karega.</p>
+      <input id="sheetFile" type="file" accept=".csv,.xlsx,.xls">
+      <p id="sheetInfo" class="muted"></p>
+      <div id="sheetPreview" class="table-wrap"></div>
+    </div>
+
+    <!-- Agent AI -->
+    <div id="page-agent" class="page hidden">
+      <h2>Agent AI</h2>
+      <div class="row">
+        <select id="agentProvider"></select>
+        <label class="check"><input id="useSheet" type="checkbox" checked> Use uploaded sheet</label>
+        <button id="clearChat" class="btn small" type="button">Clear chat</button>
+      </div>
+      <div id="chat" class="chat"></div>
+      <form id="chatForm" class="row">
+        <input id="chatInput" placeholder="Apna sawal likho..." autocomplete="off" required>
+        <button class="btn primary" type="submit">Send</button>
+      </form>
+    </div>
+  </section>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<script src="app.js"></script>
+</body>
+</html>
