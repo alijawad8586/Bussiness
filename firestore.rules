@@ -1,0 +1,62 @@
+rules_version = '2';
+
+// Everything belongs to the signed-in user. The browser can read its own data,
+// but all writes that matter (contacts, messages, campaigns, secrets) happen on the server.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isOwner(uid) {
+      return request.auth != null && request.auth.uid == uid;
+    }
+
+    match /users/{uid} {
+      allow read: if isOwner(uid);
+      allow create, update: if isOwner(uid)
+        && request.resource.data.keys().hasOnly(['name', 'email', 'createdAt', 'updatedAt']);
+
+      // Settings the user edits in the app
+      match /settings/main {
+        allow read: if isOwner(uid);
+        allow create, update: if isOwner(uid)
+          && request.resource.data.keys().hasOnly(['mapping', 'template', 'varCols', 'autoSend', 'speed', 'agentEnabled'])
+          && request.resource.data.speed is number
+          && request.resource.data.speed >= 1 && request.resource.data.speed <= 80
+          && request.resource.data.autoSend is bool
+          && request.resource.data.varCols is list && request.resource.data.varCols.size() <= 20;
+      }
+
+      // Connection status written by the server
+      match /settings/server {
+        allow read: if isOwner(uid);
+      }
+
+      // WhatsApp token and AI key: nobody can read or write these from the app
+      match /private/{doc} {
+        allow read, write: if false;
+      }
+
+      match /contacts/{id} {
+        allow read: if isOwner(uid);
+        // the app may only mark a chat as read
+        allow update: if isOwner(uid)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['unread'])
+          && request.resource.data.unread == 0;
+      }
+
+      match /messages/{id} {
+        allow read: if isOwner(uid);
+      }
+      match /campaigns/{id} {
+        allow read: if isOwner(uid);
+      }
+      match /sheets/{id} {
+        allow read: if isOwner(uid);
+      }
+    }
+
+    // Maps a WhatsApp number to its owner. Server only.
+    match /phoneNumbers/{id} {
+      allow read, write: if false;
+    }
+  }
+}

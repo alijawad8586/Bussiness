@@ -1,203 +1,412 @@
-import React, { useState } from 'react';
-import { Pressable, View } from 'react-native';
-import { pickSheet } from '../sheet';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Text, View } from 'react-native';
 import { colors, font, statusColors } from '../theme';
-import { TEMPLATES } from '../data';
-import { Button, Card, CardHeading, Icon, Select, Sheet, SheetIcon, T, Toggle, useLayout } from '../components/ui';
+import { api } from '../api';
+import { WEBHOOK_URL } from '../firebase';
+import { pickSheet, PickedSheet } from '../sheet';
+import { renderBody } from '../template';
+import { Button, Card, CardHeading, Chip, Icon, Input, Select, Sheet, SheetIcon, T, Toggle, useLayout } from '../components/ui';
 import { Shell } from '../components/Shell';
-import { DEFAULT_COLUMNS, Settings as SettingsT, useStore } from '../store';
+import { ImportResult, MainSettings, TemplateRef } from '../types';
+import { useStore } from '../store';
 
-const SCHEDULES = ['Daily at 09:00', 'Daily at 12:00', 'Daily at 18:00', 'Weekly on Monday', 'Manual only'];
-const SPEEDS = ['10 messages / minute', '20 messages / minute', '40 messages / minute', '60 messages / minute'];
-const opt = (list: string[]) => list.map((v) => ({ value: v, label: v }));
-
-const MAP_FIELDS: { key: keyof SettingsT['mapping']; label: string; required?: boolean }[] = [
-  { key: 'phone', label: 'Phone number', required: true },
-  { key: 'patient', label: 'Patient name' },
-  { key: 'doctor', label: 'Doctor' },
-  { key: 'time', label: 'Appointment time' },
+const SPEEDS = [10, 20, 40, 60];
+const PROVIDERS = [
+  { value: 'gemini', label: 'Gemini (Google)', model: 'gemini-2.5-flash' },
+  { value: 'openai', label: 'ChatGPT (OpenAI)', model: 'gpt-4o-mini' },
+  { value: 'anthropic', label: 'Claude (Anthropic)', model: 'claude-haiku-4-5-20251001' },
+  { value: 'groq', label: 'Groq', model: 'llama-3.3-70b-versatile' },
+  { value: 'custom', label: 'Other (OpenAI-compatible)', model: '' },
 ];
 
-function ago(ts: number) {
-  const m = Math.max(0, Math.round((Date.now() - ts) / 60000));
-  if (m < 1) return 'just now';
-  if (m < 60) return `${m} min ago`;
-  const h = Math.round(m / 60);
-  return h < 24 ? `${h} h ago` : `${Math.round(h / 24)} d ago`;
-}
+const tplKey = (t: TemplateRef) => `${t.name}|${t.language}`;
 
-function guess(columns: string[], hints: string[], fallback: string) {
-  return columns.find((c) => hints.some((h) => c.toLowerCase().includes(h))) ?? fallback;
-}
-
-export default function Settings() {
-  const { settings, updateSettings, generateReport, go, showToast, setSheet } = useStore();
+export default function Settings({ initialTab = 'source' }: { initialTab?: 'source' | 'agent' }) {
+  const { main, saveMain, server, lastSheet, go, showToast, user, logOut } = useStore();
   const { wide } = useLayout();
-  const [draft, setDraft] = useState<SettingsT>(settings);
-  const [confirm, setConfirm] = useState(false);
+  const [tab, setTab] = useState<'source' | 'agent'>(initialTab);
 
-  const set = (patch: Partial<SettingsT>) => setDraft((d) => ({ ...d, ...patch }));
-  /** Changes to the data source apply straight away (like a sync). */
-  const applySource = (patch: Partial<SettingsT>) => { updateSettings(patch); set(patch); };
+  return (
+    <Shell title="Settings" subtitle="Patient source and AI agent">
+      <View style={{ flexDirection: 'row', gap: 8 }}>
+        <Chip label="Patient source" active={tab === 'source'} onPress={() => setTab('source')} />
+        <Chip label="AI Agent" active={tab === 'agent'} onPress={() => setTab('agent')} />
+      </View>
+      {tab === 'source' ? <SourceTab /> : <AgentTab />}
 
-  const phoneOk = !!draft.mapping.phone && draft.columns.includes(draft.mapping.phone);
-  const dirty = JSON.stringify(draft) !== JSON.stringify(settings);
-  const tpl = TEMPLATES.find((t) => t.name === draft.template) ?? TEMPLATES[0];
+      <Card style={{ gap: 12, flexDirection: wide ? 'row' : 'column', alignItems: wide ? 'center' : 'flex-start' }}>
+        <View style={{ flex: 1 }}>
+          <T weight={font.semi}>{user?.name}</T>
+          <T size={13} color={colors.muted}>{user?.email}</T>
+        </View>
+        <Button label="Reconnect WhatsApp" icon="link" onPress={() => go({ name: 'connect' })} />
+        <Button label="Log out" icon="log-out" onPress={logOut} />
+      </Card>
+    </Shell>
+  );
+}
 
-  const pickFile = async () => {
+/* ------------------------------------------------------------------ */
+/* Tab 1: patient source                                               */
+/* ------------------------------------------------------------------ */
+
+function SourceTab() {
+  const { main, saveMain, server, lastSheet, go, showToast } = useStore();
+  const { wide } = useLayout();
+  const [draft, setDraft] = useState<MainSettings>(main);
+  const [dirty, setDirty] = useState(false);
+  const [file, setFile] = useState<PickedSheet | null>(null);
+  const [templates, setTemplates] = useState<TemplateRef[]>([]);
+  const [tplState, setTplState] = useState<'idle' | 'loading' | 'error'>('idle');
+  const [tplError, setTplError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<ImportResult | null>(null);
+  const [confirmSend, setConfirmSend] = useState(false);
+
+  useEffect(() => { if (!dirty) setDraft(main); }, [main, dirty]);
+  const edit = (patch: Partial<MainSettings>) => { setDraft((d) => ({ ...d, ...patch })); setDirty(true); };
+
+  const connected = !!server.whatsapp?.connected;
+  const columns = file?.columns ?? lastSheet?.columns ?? [];
+  const colOptions = columns.map((c) => ({ value: c, label: c }));
+  const optional = [{ value: '', label: 'Not used' }, ...colOptions];
+
+  const loadTemplates = async () => {
+    setTplState('loading'); setTplError('');
     try {
-      const picked = await pickSheet();
-      if (!picked) return;
-      setSheet(picked); // also available on the Upload Sheet and Agent AI pages
-      const columns = picked.rows[0].map((c) => c.trim()).filter(Boolean);
-      const rows = Math.max(0, picked.rows.length - 1);
-      applySource({
-        source: 'upload', fileName: picked.name, rows, columns, lastSynced: Date.now(),
-        mapping: {
-          phone: guess(columns, ['phone', 'mobile', 'number'], columns[0]),
-          patient: guess(columns, ['name', 'patient'], columns[1] ?? columns[0]),
-          doctor: guess(columns, ['doctor', 'dr'], columns[2] ?? columns[0]),
-          time: guess(columns, ['time', 'date', 'appointment'], columns[3] ?? columns[0]),
-        },
-      });
-      showToast(`${picked.name} loaded · ${rows.toLocaleString()} rows`);
-    } catch {
-      showToast('Could not read that file');
+      setTemplates((await api.listTemplates()).templates);
+      setTplState('idle');
+    } catch (e) {
+      setTplState('error');
+      setTplError(e instanceof Error ? e.message : 'Could not load templates');
+    }
+  };
+  useEffect(() => { if (connected) loadTemplates(); }, [connected]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const tplOptions = useMemo(() => {
+    const list = [...templates];
+    if (draft.template && !list.some((t) => tplKey(t) === tplKey(draft.template!))) list.unshift(draft.template);
+    return list.map((t) => ({ value: tplKey(t), label: t.name, sub: `${t.language} · ${t.variableCount} variable${t.variableCount === 1 ? '' : 's'}` }));
+  }, [templates, draft.template]);
+
+  const chooseTemplate = (key: string) => {
+    const t = [...templates, ...(draft.template ? [draft.template] : [])].find((x) => tplKey(x) === key);
+    if (!t) return;
+    // guess: {{1}} = patient, {{2}} = doctor, the rest = the next unused columns
+    const used = new Set<string>();
+    const guess = [draft.mapping.patientCol, draft.mapping.doctorCol];
+    const varCols = Array.from({ length: t.variableCount }, (_, i) => {
+      const pick = (guess[i] && columns.includes(guess[i]) ? guess[i] : columns.find((c) => !used.has(c) && c !== draft.mapping.phoneCol)) ?? '';
+      used.add(pick);
+      return pick;
+    });
+    edit({ template: t, varCols });
+  };
+
+  const chooseFile = async () => {
+    try {
+      const f = await pickSheet();
+      if (!f) return;
+      setFile(f); setResult(null);
+      // pre-select obvious columns
+      const find = (...h: string[]) => f.columns.find((c) => h.some((x) => c.toLowerCase().includes(x))) ?? '';
+      const next = { phoneCol: find('phone', 'mobile', 'number', 'cell'), patientCol: find('name', 'patient'), doctorCol: find('doctor', 'dr') };
+      edit({ mapping: { ...draft.mapping, ...Object.fromEntries(Object.entries(next).filter(([, v]) => v)) } as MainSettings['mapping'] });
+      showToast(`${f.name} loaded · ${f.rows.length - 1} rows`);
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : 'Could not read that file');
     }
   };
 
-  const connectSheet = () => {
-    applySource({ source: 'sheet', fileName: 'Patients_Oct.gsheet', rows: 1248, columns: DEFAULT_COLUMNS, lastSynced: Date.now(), mapping: { phone: 'phone_number', patient: 'patient_name', doctor: 'doctor', time: 'appointment_time' } });
-    showToast('Google Sheet connected');
+  const tpl = draft.template;
+  const problems: string[] = [];
+  if (!connected) problems.push('Connect WhatsApp first.');
+  if (!draft.mapping.phoneCol) problems.push('Choose the phone number column.');
+  if (!tpl) problems.push('Choose an approved template.');
+  else if (draft.varCols.length !== tpl.variableCount || draft.varCols.some((c) => !c)) problems.push('Choose a column for every template variable.');
+
+  const save = async () => {
+    try {
+      await saveMain(draft);
+      setDirty(false);
+      showToast('Settings saved');
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : 'Could not save');
+    }
   };
 
-  const save = () => {
-    if (!phoneOk) return showToast('Match the Phone number column first');
-    if (!dirty) return showToast('No changes to save');
-    updateSettings(draft);
-    showToast('Settings saved');
+  const upload = async () => {
+    if (!file) return showToast('Choose a file first.');
+    if (problems.length) return showToast(problems[0]);
+    setBusy(true); setResult(null);
+    try {
+      await saveMain(draft);
+      setDirty(false);
+      const r = await api.importSheet({ fileName: file.name, rows: file.rows });
+      setResult(r);
+      if (r.campaign) {
+        showToast(`${r.created + r.updated} contacts saved · sending ${r.campaign.total} messages`);
+        go({ name: 'report', id: r.campaign.campaignId });
+      } else {
+        showToast(`${r.created + r.updated} contacts saved`);
+      }
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : 'Upload failed');
+    } finally {
+      setBusy(false);
+    }
   };
 
-  const sendNow = () => {
-    updateSettings(draft);
-    setConfirm(false);
-    const r = generateReport(draft.template);
-    showToast(`Sending ${draft.template} to ${draft.rows.toLocaleString()} numbers`);
-    go({ name: 'report', id: r.id });
+  const sendAgain = async () => {
+    if (!lastSheet) return;
+    setBusy(true); setConfirmSend(false);
+    try {
+      await saveMain(draft);
+      setDirty(false);
+      const r = await api.startCampaign({ sheetId: lastSheet.id });
+      showToast(`Sending ${r.total} messages`);
+      go({ name: 'report', id: r.campaignId });
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : 'Could not start sending');
+    } finally {
+      setBusy(false);
+    }
   };
 
-  const SourceOption = ({ active, icon, title, sub, onPress }: { active: boolean; icon: React.ReactNode; title: string; sub: string; onPress: () => void }) => (
-    <Pressable onPress={onPress} style={{ flex: 1, minWidth: 220, flexDirection: 'row', alignItems: 'center', gap: 12, padding: active ? 15 : 16, borderRadius: 10, borderWidth: active ? 2 : 1, borderColor: active ? colors.primary : colors.border, backgroundColor: active ? colors.tint : '#fff' }}>
-      <View style={{ width: 40, height: 40, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: active ? colors.primary : colors.bg }}>{icon}</View>
-      <View style={{ flex: 1 }}><T weight={font.semi}>{title}</T><T size={12} color={colors.muted}>{sub}</T></View>
-    </Pressable>
-  );
-
-  const ToggleRow = ({ title, sub, value, onChange }: { title: string; sub: string; value: boolean; onChange: (v: boolean) => void }) => (
-    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-      <View style={{ flex: 1, gap: 2 }}><T weight={font.medium}>{title}</T><T size={12} color={colors.muted}>{sub}</T></View>
-      <Toggle value={value} onChange={onChange} />
+  const mapRow = (label: string, key: keyof MainSettings['mapping'], required?: boolean) => (
+    <View key={key} style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+      <View style={{ width: wide ? 150 : 110, gap: 2 }}>
+        <T size={13} weight={font.medium}>{label}</T>
+        <T size={11} weight={font.medium} color={required ? colors.danger : colors.muted}>{required ? 'Required' : 'Optional'}</T>
+      </View>
+      <Icon name="arrow-left" size={16} />
+      <View style={{ flex: 1 }}>
+        <Select label={`${label} column`} value={draft.mapping[key]} options={required ? colOptions : optional} onChange={(v) => edit({ mapping: { ...draft.mapping, [key]: v } })} />
+      </View>
     </View>
   );
 
-  const colOptions = draft.columns.map((c) => ({ value: c, label: c }));
-
   return (
-    <Shell title="Settings" subtitle="Patient data, approved template and automatic sending">
-      <View style={{ flexDirection: wide ? 'row' : 'column', gap: 20, alignItems: 'flex-start' }}>
-        <View style={{ flex: wide ? 1 : undefined, width: wide ? undefined : '100%', gap: 20 }}>
-          <Card style={{ gap: 18 }}>
-            <CardHeading title="Patient data source" sub="Connect a Google Sheet or upload a spreadsheet that has your patients’ phone numbers." />
-            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 14 }}>
-              <SourceOption active={draft.source === 'sheet'} icon={<SheetIcon color={draft.source === 'sheet' ? '#fff' : colors.muted} />} title="Connect Google Sheet" sub="Auto-sync new rows" onPress={connectSheet} />
-              <SourceOption active={draft.source === 'upload'} icon={<Icon name="upload" size={20} color={draft.source === 'upload' ? '#fff' : colors.muted} />} title="Upload spreadsheet" sub=".xlsx or .csv file" onPress={pickFile} />
-            </View>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flexWrap: 'wrap', backgroundColor: colors.bg, borderRadius: 10, paddingHorizontal: 16, paddingVertical: 14 }}>
-              <SheetIcon size={22} />
-              <View style={{ flex: 1, minWidth: 160 }}>
-                <T weight={font.semi} numberOfLines={1}>{settings.fileName}</T>
-                <T size={12} color={colors.muted}>{`${settings.rows.toLocaleString()} rows · Last synced ${ago(settings.lastSynced)}`}</T>
-              </View>
-              <Button label="Sync now" icon="refresh-cw" onPress={() => { applySource({ lastSynced: Date.now() }); showToast('Sheet synced'); }} />
-            </View>
-          </Card>
-
-          <Card style={{ gap: 16 }}>
-            <CardHeading title="Match your columns" sub="Tell CareReach which sheet column holds each patient detail." />
-            {MAP_FIELDS.map((f) => (
-              <View key={f.key} style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-                <View style={{ flex: 1 }}>
-                  <Select label={`${f.label} column`} value={draft.mapping[f.key]} options={colOptions} onChange={(v) => set({ mapping: { ...draft.mapping, [f.key]: v } })} />
-                </View>
-                <Icon name="arrow-right" size={16} />
-                <View style={{ width: wide ? 220 : 110, gap: 2 }}>
-                  <T size={13} weight={font.medium}>{f.label}</T>
-                  <T size={11} weight={font.medium} color={f.required ? colors.danger : colors.muted}>{f.required ? 'Required' : 'Used in message'}</T>
-                </View>
-              </View>
-            ))}
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, padding: 12, borderRadius: 8, backgroundColor: phoneOk ? statusColors.Delivered.bg : statusColors.Failed.bg }}>
-              <Icon name={phoneOk ? 'check' : 'alert-circle'} size={16} color={phoneOk ? statusColors.Delivered.fg : statusColors.Failed.fg} />
-              <T size={13} weight={font.medium} color={phoneOk ? statusColors.Delivered.fg : statusColors.Failed.fg}>
-                {phoneOk ? 'All required columns are matched' : 'Choose the column that holds phone numbers'}
+    <View style={{ flexDirection: wide ? 'row' : 'column', gap: 20, alignItems: 'flex-start' }}>
+      <View style={{ flex: wide ? 1 : undefined, width: wide ? undefined : '100%', gap: 20 }}>
+        <Card style={{ gap: 14 }}>
+          <CardHeading title="Patient data source" sub="Upload a CSV or Excel file with your patients’ phone numbers." />
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flexWrap: 'wrap', backgroundColor: colors.bg, borderRadius: 10, paddingHorizontal: 16, paddingVertical: 14 }}>
+            <SheetIcon size={22} />
+            <View style={{ flex: 1, minWidth: 160 }}>
+              <T weight={font.semi} numberOfLines={1}>{file ? file.name : lastSheet ? lastSheet.fileName : 'No file yet'}</T>
+              <T size={12} color={colors.muted}>
+                {file ? `${(file.rows.length - 1).toLocaleString()} rows ready to upload` : lastSheet ? `${lastSheet.rows.toLocaleString()} rows · ${lastSheet.created} new, ${lastSheet.updated} updated, ${lastSheet.skipped} skipped` : '.xlsx or .csv'}
               </T>
             </View>
-          </Card>
-        </View>
+            <Button label={file || lastSheet ? 'Choose another file' : 'Upload sheet'} icon="upload" onPress={chooseFile} />
+          </View>
+          {result && (result.skipped > 0 || result.duplicates > 0) ? (
+            <View style={{ backgroundColor: '#fef3c7', borderRadius: 8, padding: 12, gap: 4 }}>
+              <T size={13} weight={font.semi} color="#b45309">{result.skipped} row{result.skipped === 1 ? '' : 's'} skipped{result.duplicates ? `, ${result.duplicates} duplicate number${result.duplicates === 1 ? '' : 's'}` : ''}</T>
+              {result.errors.slice(0, 5).map((e) => <T key={e.row} size={12} color="#b45309">Row {e.row}: {e.reason}</T>)}
+            </View>
+          ) : null}
+          {result?.sendError ? <View style={{ backgroundColor: '#fee2e2', borderRadius: 8, padding: 12 }}><T size={13} color={colors.danger}>Contacts were saved, but sending did not start: {result.sendError}</T></View> : null}
+        </Card>
 
-        <View style={{ width: wide ? 460 : '100%', gap: 20 }}>
-          <Card style={{ gap: 16 }}>
-            <CardHeading title="Approved message template" sub="Only templates approved by WhatsApp can be sent." />
-            <Select
-              label="Approved message template"
-              height={48}
-              value={draft.template}
-              onChange={(v) => set({ template: v })}
-              options={TEMPLATES.map((t) => ({ value: t.name, label: t.name, sub: t.meta }))}
+        <Card style={{ gap: 16 }}>
+          <CardHeading title="Match your columns" sub="Tell CareReach which column holds each detail." />
+          {columns.length ? (
+            <>
+              {mapRow('Phone number', 'phoneCol', true)}
+              {mapRow('Patient name', 'patientCol')}
+              {mapRow('Doctor', 'doctorCol')}
+            </>
+          ) : <T color={colors.muted}>Upload a sheet to choose columns.</T>}
+        </Card>
+      </View>
+
+      <View style={{ width: wide ? 460 : '100%', gap: 20 }}>
+        <Card style={{ gap: 14 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: connected ? colors.green : '#ef4444' }} />
+            <T weight={font.semi}>{connected ? `WhatsApp connected · ${server.whatsapp?.displayNumber ?? ''}` : 'WhatsApp is not connected'}</T>
+          </View>
+          {connected ? (
+            <>
+              <T size={12} color={colors.muted}>To receive patient replies, add this webhook in your Meta app (WhatsApp → Configuration) with the verify token from functions/.env and subscribe to “messages”:</T>
+              <Text selectable style={{ fontSize: 12, color: colors.dark, backgroundColor: colors.tint, padding: 10, borderRadius: 8 }}>{WEBHOOK_URL}</Text>
+            </>
+          ) : null}
+        </Card>
+
+        <Card style={{ gap: 16 }}>
+          <CardHeading title="Approved message template" sub="Only templates approved by WhatsApp can be sent." />
+          {tplOptions.length ? (
+            <Select label="Approved message template" height={48} value={tpl ? tplKey(tpl) : ''} options={tplOptions} onChange={chooseTemplate}
               renderValue={(o) => (
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                   <Icon name="file-text" size={16} color={colors.primary} />
                   <T weight={font.semi} numberOfLines={1} style={{ flexShrink: 1 }}>{o.label}</T>
                   <View style={{ backgroundColor: statusColors.Delivered.bg, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 2 }}><T size={11} weight={font.semi} color={statusColors.Delivered.fg}>Approved</T></View>
                 </View>
-              )}
-            />
-            <View style={{ backgroundColor: colors.chatBg, borderRadius: 10, padding: 14, gap: 8 }}>
-              <T size={11} weight={font.semi} color={colors.muted}>PREVIEW</T>
-              <View style={{ backgroundColor: colors.bubbleOut, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10 }}>
-                <T size={13} style={{ lineHeight: 19 }}>{tpl.body}</T>
-              </View>
-            </View>
-          </Card>
+              )} />
+          ) : (
+            <T color={tplState === 'error' ? colors.danger : colors.muted}>{tplState === 'loading' ? 'Loading your approved templates…' : tplState === 'error' ? tplError : connected ? 'No approved templates found in your WhatsApp account.' : 'Connect WhatsApp to load templates.'}</T>
+          )}
+          {connected ? <T size={12} weight={font.medium} color={colors.primary} onPress={loadTemplates}>Refresh templates</T> : null}
 
-          <Card style={{ gap: 18 }}>
-            <CardHeading title="Automatic sending" sub="Send the approved template to every number in the sheet." />
-            <ToggleRow title="Send automatically" sub="Message each phone number in the selected sheet" value={draft.autoSend} onChange={(v) => set({ autoSend: v })} />
-            <ToggleRow title="Check numbers on WhatsApp first" sub="Mark numbers without WhatsApp instead of failing" value={draft.checkNumbers} onChange={(v) => set({ checkNumbers: v })} />
-            <ToggleRow title="Retry failed messages once" sub="Try again after 15 minutes" value={draft.retry} onChange={(v) => set({ retry: v })} />
-            <View style={{ flexDirection: 'row', gap: 12 }}>
-              <View style={{ flex: 1, gap: 6 }}><T size={12} weight={font.medium} color={colors.muted}>Schedule</T><Select label="Schedule" value={draft.schedule} options={opt(SCHEDULES)} onChange={(v) => set({ schedule: v })} /></View>
-              <View style={{ flex: 1, gap: 6 }}><T size={12} weight={font.medium} color={colors.muted}>Sending speed</T><Select label="Sending speed" value={draft.speed} options={opt(SPEEDS)} onChange={(v) => set({ speed: v })} /></View>
+          {tpl ? (
+            <>
+              <View style={{ backgroundColor: colors.chatBg, borderRadius: 10, padding: 14, gap: 8 }}>
+                <T size={11} weight={font.semi} color={colors.muted}>PREVIEW</T>
+                <View style={{ backgroundColor: colors.bubbleOut, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10 }}>
+                  <T size={13} style={{ lineHeight: 19 }}>{renderBody(tpl.body, draft.varCols.map((c) => (file?.rows[1]?.[file.columns.indexOf(c)] ?? (c ? `[${c}]` : ''))))}</T>
+                </View>
+              </View>
+              {Array.from({ length: tpl.variableCount }, (_, i) => (
+                <View key={i} style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                  <T size={13} weight={font.semi} style={{ width: 52 }}>{`{{${i + 1}}}`}</T>
+                  <Icon name="arrow-left" size={16} />
+                  <View style={{ flex: 1 }}>
+                    <Select label={`Variable ${i + 1}`} value={draft.varCols[i] ?? ''} options={colOptions.length ? colOptions : [{ value: '', label: 'Upload a sheet first' }]} onChange={(v) => { const next = [...draft.varCols]; next[i] = v; edit({ varCols: next }); }} />
+                  </View>
+                </View>
+              ))}
+            </>
+          ) : null}
+        </Card>
+
+        <Card style={{ gap: 18 }}>
+          <CardHeading title="Sending" sub="Messages go out one by one to every number in the sheet." />
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+            <View style={{ flex: 1, gap: 2 }}>
+              <T weight={font.medium}>Send automatically after upload</T>
+              <T size={12} color={colors.muted}>Off = only save the contacts</T>
             </View>
-            <View style={{ flexDirection: 'row', gap: 10 }}>
-              <Button kind="primary" label="Save settings" onPress={save} flex />
-              <Button label="Send now" icon="zap" onPress={() => (phoneOk ? setConfirm(true) : showToast('Match the Phone number column first'))} />
-            </View>
-          </Card>
-        </View>
+            <Toggle value={draft.autoSend} onChange={(v) => edit({ autoSend: v })} />
+          </View>
+          <View style={{ gap: 6 }}>
+            <T size={12} weight={font.medium} color={colors.muted}>Sending speed</T>
+            <Select label="Sending speed" value={String(draft.speed)} options={SPEEDS.map((n) => ({ value: String(n), label: `${n} messages / minute` }))} onChange={(v) => edit({ speed: Number(v) })} />
+          </View>
+          {problems.length && file ? <T size={12} color={colors.danger}>{problems[0]}</T> : null}
+          <View style={{ flexDirection: 'row', gap: 10, flexWrap: 'wrap' }}>
+            <Button label="Save settings" onPress={save} disabled={busy || !dirty} flex />
+            <Button kind="primary" label={busy ? 'Working…' : draft.autoSend ? 'Upload & send' : 'Upload contacts'} icon="upload-cloud" onPress={upload} disabled={busy || !file} flex />
+          </View>
+          {lastSheet && !file ? <Button label="Send template to the last uploaded sheet" icon="zap" onPress={() => (problems.length ? showToast(problems[0]) : setConfirmSend(true))} disabled={busy} /> : null}
+        </Card>
       </View>
 
-      <Sheet visible={confirm} onClose={() => setConfirm(false)} title="Send now?">
+      <Sheet visible={confirmSend} onClose={() => setConfirmSend(false)} title="Send now?">
         <View style={{ padding: 10, gap: 16 }}>
-          <T color={colors.muted} style={{ lineHeight: 21 }}>
-            {`This will send “${draft.template}” to ${draft.rows.toLocaleString()} numbers from ${draft.fileName}.`}
-          </T>
+          <T color={colors.muted} style={{ lineHeight: 21 }}>{`This sends “${draft.template?.name}” to every patient in ${lastSheet?.fileName} (people who opted out are skipped).`}</T>
           <View style={{ flexDirection: 'row', gap: 10 }}>
-            <Button label="Cancel" onPress={() => setConfirm(false)} flex />
-            <Button kind="primary" label="Send now" icon="zap" onPress={sendNow} flex />
+            <Button label="Cancel" onPress={() => setConfirmSend(false)} flex />
+            <Button kind="primary" label="Send now" icon="zap" onPress={sendAgain} flex />
           </View>
         </View>
       </Sheet>
-    </Shell>
+    </View>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Tab 2: AI agent                                                     */
+/* ------------------------------------------------------------------ */
+
+function AgentTab() {
+  const { server, main, showToast } = useStore();
+  const { wide } = useLayout();
+  const saved = server.agent;
+  const [provider, setProvider] = useState(saved?.provider ?? 'gemini');
+  const [key, setKey] = useState('');
+  const [model, setModel] = useState(saved?.model ?? '');
+  const [baseUrl, setBaseUrl] = useState(saved?.baseUrl ?? '');
+  const [enabled, setEnabled] = useState(main.agentEnabled);
+  const [busy, setBusy] = useState<'save' | 'test' | null>(null);
+  const [testMsg, setTestMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  useEffect(() => { if (saved) { setProvider(saved.provider); setModel(saved.model); setBaseUrl(saved.baseUrl ?? ''); } }, [saved?.provider, saved?.model, saved?.baseUrl]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => setEnabled(main.agentEnabled), [main.agentEnabled]);
+
+  const info = PROVIDERS.find((p) => p.value === provider)!;
+
+  const save = async () => {
+    setBusy('save'); setTestMsg(null);
+    try {
+      await api.saveAgent({ provider, apiKey: key.trim() || undefined, model: model.trim() || undefined, baseUrl: provider === 'custom' ? baseUrl.trim() : undefined, enabled });
+      setKey('');
+      showToast(enabled ? 'AI agent is on' : 'AI settings saved');
+    } catch (e) {
+      setTestMsg({ ok: false, text: e instanceof Error ? e.message : 'Could not save' });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const test = async () => {
+    setBusy('test'); setTestMsg(null);
+    try {
+      if (key.trim()) await save();
+      const r = await api.testAgent();
+      setTestMsg({ ok: true, text: `Connected. The AI answered: “${r.reply}”` });
+    } catch (e) {
+      setTestMsg({ ok: false, text: e instanceof Error ? e.message : 'Test failed' });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <View style={{ flexDirection: wide ? 'row' : 'column', gap: 20, alignItems: 'flex-start' }}>
+      <Card style={{ gap: 16, flex: wide ? 1 : undefined, width: wide ? undefined : '100%' }}>
+        <CardHeading title="AI provider" sub="Choose your AI and paste its API key. It is stored only on the server and never shown again." />
+        <View style={{ gap: 6 }}>
+          <T size={12} weight={font.medium} color={colors.muted}>Provider</T>
+          <Select label="AI provider" value={provider} options={PROVIDERS.map((p) => ({ value: p.value, label: p.label }))} onChange={(v) => { setProvider(v); setModel(PROVIDERS.find((p) => p.value === v)?.model ?? ''); }} />
+        </View>
+        <View style={{ gap: 6 }}>
+          <T size={12} weight={font.medium} color={colors.muted}>API key</T>
+          <Input value={key} onChangeText={setKey} secureTextEntry autoCapitalize="none" autoCorrect={false} accessibilityLabel="AI API key"
+            placeholder={saved?.hasKey ? '•••••••• saved. Paste a new key to replace it' : 'Paste your API key'} />
+        </View>
+        {provider === 'custom' ? (
+          <View style={{ gap: 6 }}>
+            <T size={12} weight={font.medium} color={colors.muted}>API address</T>
+            <Input value={baseUrl} onChangeText={setBaseUrl} autoCapitalize="none" autoCorrect={false} accessibilityLabel="API address" placeholder="https://api.deepseek.com/v1" />
+          </View>
+        ) : null}
+        <View style={{ gap: 6 }}>
+          <T size={12} weight={font.medium} color={colors.muted}>Model</T>
+          <Input value={model} onChangeText={setModel} autoCapitalize="none" autoCorrect={false} accessibilityLabel="AI model" placeholder={info.model || 'Model name'} />
+        </View>
+        {testMsg ? <T size={13} color={testMsg.ok ? '#15803d' : colors.danger}>{testMsg.text}</T> : null}
+        {saved?.lastError && !testMsg ? <T size={12} color={colors.danger}>Last AI error: {saved.lastError}</T> : null}
+        <View style={{ flexDirection: 'row', gap: 10, flexWrap: 'wrap' }}>
+          <Button kind="primary" label={busy === 'save' ? 'Saving…' : 'Save'} onPress={save} disabled={!!busy} flex />
+          <Button label={busy === 'test' ? 'Testing…' : 'Test connection'} icon="zap" onPress={test} disabled={!!busy || !(saved?.hasKey || key.trim())} />
+        </View>
+      </Card>
+
+      <Card style={{ gap: 16, width: wide ? 460 : '100%' }}>
+        <CardHeading title="Agent mode" sub="Let the AI answer patient messages automatically." />
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+          <View style={{ flex: 1, gap: 2 }}>
+            <T weight={font.medium}>Reply to patients automatically</T>
+            <T size={12} color={colors.muted}>{saved?.hasKey ? 'Applies when you press Save' : 'Save an API key first'}</T>
+          </View>
+          <Toggle value={enabled} onChange={setEnabled} />
+        </View>
+        <View style={{ backgroundColor: colors.tint, borderRadius: 10, padding: 14, gap: 6 }}>
+          <T size={13} weight={font.semi} color={colors.dark}>How the agent stays safe</T>
+          {[
+            'Only answers a message the patient just sent.',
+            'Answers appointment and clinic questions. No medical advice.',
+            'Emergency words go to your staff, not to the AI.',
+            'STOP unsubscribes the patient immediately.',
+            'At most 8 automatic replies per patient per hour.',
+            'If the AI fails, the message stays unread for your staff.',
+          ].map((t) => <T key={t} size={12} color={colors.dark}>• {t}</T>)}
+        </View>
+      </Card>
+    </View>
   );
 }

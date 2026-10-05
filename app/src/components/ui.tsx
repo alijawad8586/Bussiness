@@ -5,7 +5,8 @@ import {
 } from 'react-native';
 import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import { colors, font, Status, statusColors } from '../theme';
-import { avatarColor, initials } from '../data';
+import { avatarColor, initials } from '../format';
+import { MsgStatus } from '../types';
 
 export function useLayout() {
   const { width, height } = useWindowDimensions();
@@ -102,6 +103,13 @@ export function StatusBadge({ status }: { status: Status }) {
       <T size={12} weight={font.medium} color={c.fg}>{status}</T>
     </View>
   );
+}
+
+export const labelOf = (s: MsgStatus): Status =>
+  s === 'delivered' || s === 'read' ? 'Delivered' : s === 'failed' ? 'Failed' : s === 'not_on_whatsapp' ? 'Not on WhatsApp' : s === 'sent' ? 'Sent' : 'Queued';
+
+export function MsgBadge({ status }: { status: MsgStatus }) {
+  return <StatusBadge status={labelOf(status)} />;
 }
 
 export function Avatar({ name, size = 44 }: { name: string; size?: number }) {

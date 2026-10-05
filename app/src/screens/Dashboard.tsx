@@ -1,11 +1,12 @@
 import React from 'react';
 import { View } from 'react-native';
 import { colors, font, statusColors } from '../theme';
-import { LAST_7_DAYS, MESSAGES, pct, summarize } from '../data';
-import { Card, CardHeading, Icon, IconName, T, useLayout } from '../components/ui';
+import { pct, nicename } from '../format';
+import { Button, Card, CardHeading, Icon, IconName, T, useLayout } from '../components/ui';
 import { BarChart, Donut, Legend } from '../components/Charts';
 import { MessageTable } from '../components/MessageTable';
 import { Shell } from '../components/Shell';
+import { useCount, useLast7Days, useRecentOut, userCol } from '../hooks';
 import { useStore } from '../store';
 
 function Stat({ icon, bg, iconColor, label, value, note, noteColor }: {
@@ -26,32 +27,52 @@ function Stat({ icon, bg, iconColor, label, value, note, noteColor }: {
 }
 
 export default function Dashboard() {
-  const { go, settings } = useStore();
+  const { go, user, campaigns, lastSheet } = useStore();
   const { wide } = useLayout();
-  const t = summarize(MESSAGES);
+  const camp = campaigns[0];
+  const patients = useCount(user ? () => userCol(user.uid, 'contacts') : null, `${lastSheet?.id}-${lastSheet?.created}`);
+  const days = useLast7Days(`${camp?.id}-${camp?.stats.sent}`);
+  const recent = useRecentOut(4);
   const n = (x: number) => x.toLocaleString();
 
+  if (!camp) {
+    return (
+      <Shell title="Dashboard" subtitle="Your patient messaging at a glance">
+        <Card style={{ alignItems: 'center', gap: 14, padding: 40 }}>
+          <Icon name="send" size={36} color={colors.placeholder} />
+          <T size={16} weight={font.semi}>No messages sent yet</T>
+          <T color={colors.muted} style={{ textAlign: 'center' }}>Upload your patient sheet, choose an approved template and WhatsApp messages go out one by one.</T>
+          <Button kind="primary" label="Go to Settings" icon="sliders" onPress={() => go({ name: 'settings' })} />
+        </Card>
+      </Shell>
+    );
+  }
+
+  const s = camp.stats;
+  const sent = camp.total - s.queued;
+  const t = { delivered: s.delivered, failed: s.failed, notWa: s.notWhatsapp, pending: s.sent };
+
   return (
-    <Shell title="Dashboard" subtitle="Appointment reminders · October 2026 campaign">
+    <Shell title="Dashboard" subtitle={`${nicename(camp.template.name)} · latest campaign${camp.status !== 'completed' ? ` (${camp.status})` : ''}`}>
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 16 }}>
-        <Stat icon="users" bg={colors.blueBg} iconColor={colors.blue} label="Total patients" value={n(settings.rows)} note={`From ${settings.fileName}`} noteColor={colors.blue} />
-        <Stat icon="send" bg={colors.tint} iconColor={colors.primary} label="Messages sent" value={n(t.sent)} note={`${Math.round((t.sent / settings.rows) * 100)}% of patients`} noteColor={colors.primary} />
-        <Stat icon="check-circle" bg={statusColors.Delivered.bg} iconColor={statusColors.Delivered.fg} label="Delivered" value={n(t.delivered)} note={`${pct(t.delivered, t.sent)} of sent`} noteColor={statusColors.Delivered.fg} />
-        <Stat icon="x-circle" bg={statusColors.Failed.bg} iconColor={statusColors.Failed.fg} label="Failed" value={n(t.failed)} note={`${pct(t.failed, t.sent)} of sent`} noteColor={statusColors.Failed.fg} />
-        <Stat icon="help-circle" bg={statusColors['Not on WhatsApp'].bg} iconColor={statusColors['Not on WhatsApp'].fg} label="Not on WhatsApp" value={n(t.notWa)} note={`${pct(t.notWa, t.sent)} of sent`} noteColor={statusColors['Not on WhatsApp'].fg} />
+        <Stat icon="users" bg={colors.blueBg} iconColor={colors.blue} label="Total patients" value={patients === null ? '…' : n(patients)} note={lastSheet ? `From ${lastSheet.fileName}` : 'Uploaded contacts'} noteColor={colors.blue} />
+        <Stat icon="send" bg={colors.tint} iconColor={colors.primary} label="Messages sent" value={n(sent)} note={`${n(camp.total)} in this campaign`} noteColor={colors.primary} />
+        <Stat icon="check-circle" bg={statusColors.Delivered.bg} iconColor={statusColors.Delivered.fg} label="Delivered" value={n(s.delivered)} note={`${pct(s.delivered, sent)} of sent`} noteColor={statusColors.Delivered.fg} />
+        <Stat icon="x-circle" bg={statusColors.Failed.bg} iconColor={statusColors.Failed.fg} label="Failed" value={n(s.failed)} note={`${pct(s.failed, sent)} of sent`} noteColor={statusColors.Failed.fg} />
+        <Stat icon="help-circle" bg={statusColors['Not on WhatsApp'].bg} iconColor={statusColors['Not on WhatsApp'].fg} label="Not on WhatsApp" value={n(s.notWhatsapp)} note={`${pct(s.notWhatsapp, sent)} of sent`} noteColor={statusColors['Not on WhatsApp'].fg} />
       </View>
 
       <View style={{ flexDirection: wide ? 'row' : 'column', gap: 16 }}>
         <Card style={{ gap: 20, width: wide ? 440 : undefined }}>
           <CardHeading title="Delivery overview" sub="Status of all messages sent" />
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 24, flexWrap: 'wrap' }}>
-            <Donut totals={t} centerValue={n(t.sent)} centerLabel="messages sent" />
+            <Donut totals={t} centerValue={n(sent)} centerLabel="messages sent" />
             <Legend totals={t} />
           </View>
         </Card>
         <Card style={{ flex: wide ? 1 : undefined, gap: 20 }}>
           <CardHeading title="Messages sent · last 7 days" sub="Daily sending volume" />
-          <BarChart data={LAST_7_DAYS} />
+          {days.length ? <BarChart data={days} /> : <T color={colors.muted}>Loading…</T>}
         </Card>
       </View>
 
@@ -60,7 +81,7 @@ export default function Dashboard() {
           <T size={16} weight={font.semi}>Recent messages</T>
           <T size={13} weight={font.medium} color={colors.primary} onPress={() => go({ name: 'messages' })}>View all →</T>
         </View>
-        <MessageTable rows={MESSAGES.slice(0, 4).map((m, i) => ({ ...m, time: ['2 min ago', '2 min ago', '3 min ago', '3 min ago'][i] }))} showMessage={false} />
+        {recent.length ? <MessageTable rows={recent} showMessage={false} /> : <T color={colors.muted} style={{ padding: 24 }}>No messages yet.</T>}
       </Card>
     </Shell>
   );

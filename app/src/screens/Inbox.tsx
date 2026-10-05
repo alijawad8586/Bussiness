@@ -1,36 +1,37 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { FlatList, Pressable, ScrollView, TextInput, View } from 'react-native';
+import { doc, limit, onSnapshot, orderBy, query, updateDoc, where } from 'firebase/firestore';
 import { colors, font } from '../theme';
-import { Conversation, TEMPLATES, APPOINTMENT, fillTemplate } from '../data';
-import { Avatar, Card, CountBadge, Empty, Icon, Chip, SearchBox, Sheet, StatusBadge, T, Ticks, Button, useLayout } from '../components/ui';
+import { api } from '../api';
+import { db } from '../firebase';
+import { formatTime, phoneLabel, shortTime } from '../format';
+import { messageOf, userCol } from '../hooks';
+import { Avatar, Button, Card, Chip, CountBadge, Empty, Icon, MsgBadge, SearchBox, Sheet, T, Ticks, useLayout } from '../components/ui';
 import { Shell } from '../components/Shell';
+import { Contact, Message, MsgStatus } from '../types';
+import { renderBody } from '../template';
 import { useStore } from '../store';
 
 type Tab = 'All' | 'Unread' | 'Failed';
+const WINDOW_MS = 24 * 3600_000;
+const failedStatus = (s: MsgStatus | null) => s === 'failed' || s === 'not_on_whatsapp';
 
-function Preview({ c }: { c: Conversation }) {
-  const last = c.chats[c.chats.length - 1];
-  const failed = last.dir === 'out' && c.status === 'Failed' && c.chats.length === 1;
-  const color = failed ? colors.danger : colors.muted;
-  return (
-    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 }}>
-      {last.dir === 'out' ? (failed ? <Icon name="x-circle" size={15} color={colors.danger} /> : <Ticks read={last.read} />) : null}
-      <T size={13} color={color} numberOfLines={1} style={{ flex: 1 }}>{last.text}</T>
-    </View>
-  );
-}
-
-function ConversationRow({ c, active, onPress }: { c: Conversation; active: boolean; onPress: () => void }) {
+function ConversationRow({ c, active, onPress }: { c: Contact; active: boolean; onPress: () => void }) {
+  const failed = failedStatus(c.lastStatus);
   return (
     <Pressable onPress={onPress} style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: colors.border, backgroundColor: active ? colors.tintSoft : '#fff' }}>
-      <Avatar name={c.name} />
+      <Avatar name={c.name || c.phone} />
       <View style={{ flex: 1, gap: 4 }}>
         <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-          <T weight={font.semi} numberOfLines={1} style={{ flex: 1 }}>{c.name}</T>
-          <T size={12} weight={c.unread ? font.medium : font.regular} color={c.unread ? colors.primary : colors.muted}>{c.time}</T>
+          <T weight={font.semi} numberOfLines={1} style={{ flex: 1 }}>{c.name || phoneLabel(c.phone)}</T>
+          <T size={12} weight={c.unread ? font.medium : font.regular} color={c.unread ? colors.primary : colors.muted}>{shortTime(c.lastMessageAt)}</T>
         </View>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-          <Preview c={c} />
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 }}>
+            {failed ? <Icon name="x-circle" size={15} color={colors.danger} /> : null}
+            <T size={13} color={failed ? colors.danger : colors.muted} numberOfLines={1} style={{ flex: 1 }}>{c.lastMessageText}</T>
+          </View>
+          {c.needsHuman ? <T size={11} weight={font.semi} color={colors.danger}>Needs staff</T> : null}
           {c.unread ? <CountBadge n={c.unread} /> : null}
         </View>
       </View>
@@ -38,79 +39,105 @@ function ConversationRow({ c, active, onPress }: { c: Conversation; active: bool
   );
 }
 
-function Details({ c, onViewMessages }: { c: Conversation; onViewMessages: () => void }) {
-  const rows: [string, string][] = [
-    ['Doctor', c.doctor], ['Last template', c.template], ['Sent at', c.sentAt], ['Source', `Patients_Oct.gsheet · row ${c.row}`],
-  ];
+function Details({ c, onViewMessages }: { c: Contact; onViewMessages: () => void }) {
+  const row = (k: string, v: string) => <View style={{ gap: 5 }}><T size={12} weight={font.medium} color={colors.muted}>{k}</T><T weight={font.medium}>{v || '—'}</T></View>;
   return (
     <View style={{ gap: 18, flex: 1 }}>
       <View style={{ alignItems: 'center', gap: 10 }}>
-        <Avatar name={c.name} size={64} />
-        <T size={17} weight={font.semi}>{c.name}</T>
-        <T size={13} color={colors.muted}>{c.phone}</T>
+        <Avatar name={c.name || c.phone} size={64} />
+        <T size={17} weight={font.semi}>{c.name || 'Unknown patient'}</T>
+        <T size={13} color={colors.muted}>{phoneLabel(c.phone)}</T>
       </View>
-      {rows.slice(0, 3).map(([k, v]) => (
-        <View key={k} style={{ gap: 5 }}><T size={12} weight={font.medium} color={colors.muted}>{k}</T><T weight={font.medium}>{v}</T></View>
-      ))}
-      <View style={{ gap: 5 }}><T size={12} weight={font.medium} color={colors.muted}>Delivery status</T><StatusBadge status={c.status} /></View>
-      <View style={{ gap: 5 }}><T size={12} weight={font.medium} color={colors.muted}>{rows[3][0]}</T><T weight={font.medium}>{rows[3][1]}</T></View>
+      {row('Doctor', c.doctor)}
+      {row('Source', c.rowNumber ? `Uploaded sheet · row ${c.rowNumber}` : 'Started the chat themselves')}
+      {c.lastStatus ? <View style={{ gap: 5 }}><T size={12} weight={font.medium} color={colors.muted}>Last message status</T><MsgBadge status={c.lastStatus} /></View> : null}
+      {c.optOut ? <T size={13} weight={font.semi} color={colors.danger}>Patient asked to stop messages</T> : null}
       <View style={{ flex: 1 }} />
       <Button label="View in Messages" icon="chevron-right" onPress={onViewMessages} />
     </View>
   );
 }
 
+function Ticking({ m }: { m: Message }) {
+  if (m.status === 'failed' || m.status === 'not_on_whatsapp') return <Icon name="x-circle" size={14} color={colors.danger} />;
+  if (m.status === 'queued') return <Icon name="clock" size={13} color={colors.placeholder} />;
+  if (m.status === 'sent') return <Icon name="check" size={14} color={colors.placeholder} />;
+  return <Ticks read={m.status === 'read'} size={14} />;
+}
+
 export default function Inbox({ openId }: { openId?: string }) {
-  const { convs, openConversation, sendChat, go, showToast, unreadCount } = useStore();
+  const { contacts, user, go, showToast, unreadCount, main } = useStore();
   const { wide, xl, height } = useLayout();
-  const [query, setQuery] = useState('');
+  const [q, setQ] = useState('');
   const [tab, setTab] = useState<Tab>('All');
-  const [selected, setSelected] = useState<string | null>(openId ?? (wide ? convs[0]?.id ?? null : null));
+  const [selected, setSelected] = useState<string | null>(openId ?? null);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [draft, setDraft] = useState('');
+  const [busy, setBusy] = useState(false);
   const [tplOpen, setTplOpen] = useState(false);
   const [infoOpen, setInfoOpen] = useState(false);
   const listRef = useRef<FlatList>(null);
 
-  const current = convs.find((c) => c.id === selected) ?? null;
+  const chats = useMemo(() => contacts.filter((c) => c.lastMessageAt), [contacts]);
+  const current = contacts.find((c) => c.id === selected) ?? null;
+  useEffect(() => { if (wide && !selected && chats[0]) setSelected(chats[0].id); }, [wide, selected, chats]);
 
-  // Opening a chat marks it read.
+  // Live chat history for the open conversation
   useEffect(() => {
-    if (selected) openConversation(selected);
-  }, [selected, openConversation]);
+    setMessages([]);
+    if (!user || !selected) return;
+    return onSnapshot(query(userCol(user.uid, 'messages'), where('contactId', '==', selected), orderBy('createdAt', 'asc'), limit(300)),
+      (s) => setMessages(s.docs.map((d) => messageOf(d.id, d.data()))), (e) => showToast(/index/i.test(e.message) ? 'The chat needs a database index. Run: firebase deploy --only firestore:indexes' : e.message));
+  }, [user, selected, showToast]);
+
+  // Opening a chat marks it read
+  useEffect(() => {
+    if (user && current && current.unread > 0) updateDoc(doc(db, `users/${user.uid}/contacts/${current.id}`), { unread: 0 }).catch(() => {});
+  }, [user, current?.id, current?.unread]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    const t = setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50);
+    const t = setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 60);
     return () => clearTimeout(t);
-  }, [current?.chats.length, selected]);
+  }, [messages.length, selected]);
 
-  const counts = useMemo(() => ({
-    All: convs.length,
-    Unread: convs.filter((c) => c.unread > 0).length,
-    Failed: convs.filter((c) => c.status === 'Failed').length,
-  }), [convs]);
-
+  const counts = useMemo(() => ({ All: chats.length, Unread: chats.filter((c) => c.unread > 0).length, Failed: chats.filter((c) => failedStatus(c.lastStatus)).length }), [chats]);
   const list = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return convs.filter((c) =>
-      (tab === 'All' || (tab === 'Unread' ? c.unread > 0 : c.status === 'Failed')) &&
-      (!q || c.name.toLowerCase().includes(q) || c.phone.replace(/\s/g, '').includes(q.replace(/\s/g, ''))));
-  }, [convs, query, tab]);
+    const s = q.trim().toLowerCase();
+    return chats.filter((c) => (tab === 'All' || (tab === 'Unread' ? c.unread > 0 : failedStatus(c.lastStatus))) && (!s || c.name.toLowerCase().includes(s) || c.phone.includes(s.replace(/\D/g, '') || '\u0000')));
+  }, [chats, q, tab]);
 
-  const send = () => {
+  const inWindow = !!current?.lastInboundAt && Date.now() - current.lastInboundAt < WINDOW_MS;
+
+  const send = async () => {
     const text = draft.trim();
-    if (!current || !text) return;
-    sendChat(current.id, text);
-    setDraft('');
+    if (!current || !text || busy) return;
+    setBusy(true);
+    try {
+      const r = await api.sendManual({ contactId: current.id, text });
+      setDraft('');
+      if (r.status === 'failed') showToast('WhatsApp could not send this message. See the red mark.');
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : 'Could not send');
+    } finally {
+      setBusy(false);
+    }
   };
 
-  const sendTemplate = (name: string) => {
+  const sendTemplate = async () => {
     if (!current) return;
-    const t = TEMPLATES.find((x) => x.name === name)!;
-    sendChat(current.id, fillTemplate(t.body, { patient_name: current.name.split(' ')[0], doctor: current.doctor, appointment_time: APPOINTMENT }), name);
-    setTplOpen(false);
-    showToast(`Template sent: ${name}`);
+    setBusy(true);
+    try {
+      const r = await api.sendTemplate({ contactId: current.id });
+      showToast(r.status === 'failed' ? 'WhatsApp could not send the template.' : 'Template sent');
+      setTplOpen(false);
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : 'Could not send');
+    } finally {
+      setBusy(false);
+    }
   };
 
+  const tplPreview = main.template && current ? renderBody(main.template.body, main.varCols.map((k) => current.fields[k] ?? '')) : '';
   const showList = wide || !current;
   const showChat = wide || !!current;
   const boxH = wide ? Math.max(520, height - 190) : undefined;
@@ -118,7 +145,7 @@ export default function Inbox({ openId }: { openId?: string }) {
   const listPane = (
     <Card style={{ padding: 0, overflow: 'hidden', width: wide ? 360 : undefined, flex: wide ? undefined : 1 }}>
       <View style={{ padding: 16, gap: 12 }}>
-        <SearchBox value={query} onChangeText={setQuery} placeholder="Search patient or phone number" />
+        <SearchBox value={q} onChangeText={setQ} placeholder="Search patient or phone number" />
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
           {(['All', 'Unread', 'Failed'] as Tab[]).map((t) => <Chip key={t} label={`${t} ${counts[t]}`} active={tab === t} onPress={() => setTab(t)} />)}
         </ScrollView>
@@ -127,7 +154,7 @@ export default function Inbox({ openId }: { openId?: string }) {
         data={list}
         keyExtractor={(c) => c.id}
         renderItem={({ item }) => <ConversationRow c={item} active={item.id === selected} onPress={() => setSelected(item.id)} />}
-        ListEmptyComponent={<Empty text="No conversations found." />}
+        ListEmptyComponent={<Empty text={chats.length ? 'No conversations found.' : 'No conversations yet. They appear after you send or receive a message.'} />}
         style={{ borderTopWidth: 1, borderTopColor: colors.border }}
       />
     </Card>
@@ -137,25 +164,24 @@ export default function Inbox({ openId }: { openId?: string }) {
     <Card style={{ padding: 0, overflow: 'hidden', flex: 1 }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: colors.border }}>
         {!wide ? <Pressable onPress={() => setSelected(null)} hitSlop={10} accessibilityLabel="Back to conversations"><Icon name="arrow-left" size={22} color={colors.text} /></Pressable> : null}
-        <Avatar name={current.name} size={40} />
+        <Avatar name={current.name || current.phone} size={40} />
         <View style={{ flex: 1, gap: 2 }}>
-          <T size={15} weight={font.semi} numberOfLines={1}>{current.name}</T>
-          <T size={12} color={colors.muted} numberOfLines={1}>{current.phone}  ·  Patient of {current.doctor}</T>
+          <T size={15} weight={font.semi} numberOfLines={1}>{current.name || phoneLabel(current.phone)}</T>
+          <T size={12} color={colors.muted} numberOfLines={1}>{phoneLabel(current.phone)}{current.doctor ? `  ·  Patient of ${current.doctor}` : ''}</T>
         </View>
-        {wide ? <StatusBadge status={current.status} /> : null}
+        {wide && current.lastStatus ? <MsgBadge status={current.lastStatus} /> : null}
         {!xl ? <Pressable onPress={() => setInfoOpen(true)} hitSlop={10} accessibilityLabel="Patient details"><Icon name="info" size={20} color={colors.muted} /></Pressable> : null}
       </View>
 
       <FlatList
         ref={listRef}
-        data={current.chats}
+        data={messages}
         keyExtractor={(m) => m.id}
         style={{ flex: 1, backgroundColor: colors.chatBg }}
         contentContainerStyle={{ padding: 20, gap: 14 }}
-        ListHeaderComponent={<View style={{ alignItems: 'center' }}><View style={{ backgroundColor: '#fff', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 4 }}><T size={12} weight={font.medium} color={colors.muted}>Today</T></View></View>}
+        ListEmptyComponent={<T color={colors.muted} style={{ textAlign: 'center', paddingTop: 30 }}>No messages yet.</T>}
         renderItem={({ item: m }) => {
-          const out = m.dir === 'out';
-          const failed = out && current.status === 'Failed' && m.template && current.chats[0].id === m.id;
+          const out = m.direction === 'out';
           return (
             <View style={{ alignItems: out ? 'flex-end' : 'flex-start' }}>
               <View style={{ maxWidth: '85%', backgroundColor: out ? colors.bubbleOut : '#fff', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10, gap: 6 }}>
@@ -165,32 +191,35 @@ export default function Inbox({ openId }: { openId?: string }) {
                     <T size={11} weight={font.medium} color={colors.primary}>Template · {m.template}</T>
                   </View>
                 ) : null}
+                {out && m.by === 'agent' ? <T size={11} weight={font.medium} color={colors.primary}>AI reply</T> : null}
                 <T size={14} style={{ lineHeight: 20 }}>{m.text}</T>
                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 4 }}>
-                  <T size={11} color={colors.muted}>{m.time}</T>
-                  {out ? (failed ? <Icon name="x-circle" size={14} color={colors.danger} /> : <Ticks read={m.read} size={14} />) : null}
+                  <T size={11} color={colors.muted}>{formatTime(m.createdAt)}</T>
+                  {out ? <Ticking m={m} /> : null}
                 </View>
               </View>
+              {m.error ? <T size={11} color={colors.danger} style={{ maxWidth: '85%', marginTop: 3 }}>{m.error.hint}</T> : null}
             </View>
           );
         }}
       />
 
+      {!inWindow && !current.optOut ? (
+        <View style={{ backgroundColor: '#fef3c7', paddingHorizontal: 16, paddingVertical: 8 }}>
+          <T size={12} color="#b45309">The patient has not written in the last 24 hours. WhatsApp only allows an approved template now.</T>
+        </View>
+      ) : null}
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, padding: 12, borderTopWidth: 1, borderTopColor: colors.border, backgroundColor: '#fff' }}>
         <View style={{ flex: 1, height: 44, borderRadius: 22, backgroundColor: colors.bg, paddingHorizontal: 14, justifyContent: 'center' }}>
           <TextInput
-            value={draft}
-            onChangeText={setDraft}
-            onSubmitEditing={send}
-            placeholder="Type a message…"
-            placeholderTextColor={colors.placeholder}
-            returnKeyType="send"
-            accessibilityLabel="Type a message"
+            value={draft} onChangeText={setDraft} onSubmitEditing={send} editable={!current.optOut}
+            placeholder={current.optOut ? 'Patient opted out' : 'Type a message…'} placeholderTextColor={colors.placeholder}
+            returnKeyType="send" accessibilityLabel="Type a message"
             style={{ fontSize: 14, color: colors.text, height: '100%', ...({ outlineStyle: 'none' } as object) }}
           />
         </View>
-        <Button label={wide ? 'Template' : ''} icon="file-text" onPress={() => setTplOpen(true)} style={!wide ? { paddingHorizontal: 12, height: 44 } : undefined} />
-        <Pressable onPress={send} disabled={!draft.trim()} accessibilityLabel="Send" style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center', opacity: draft.trim() ? 1 : 0.5 }}>
+        <Button label={wide ? 'Template' : ''} icon="file-text" onPress={() => setTplOpen(true)} disabled={current.optOut} style={!wide ? { paddingHorizontal: 12, height: 44 } : undefined} />
+        <Pressable onPress={send} disabled={!draft.trim() || busy} accessibilityLabel="Send" style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center', opacity: draft.trim() && !busy ? 1 : 0.5 }}>
           <Icon name="send" size={18} color="#fff" />
         </Pressable>
       </View>
@@ -212,16 +241,21 @@ export default function Inbox({ openId }: { openId?: string }) {
         {xl && current ? <Card style={{ width: 280, paddingVertical: 22 }}>{details}</Card> : null}
       </View>
 
-      <Sheet visible={tplOpen} onClose={() => setTplOpen(false)} title="Send an approved template">
-        {TEMPLATES.map((t) => (
-          <Pressable key={t.name} onPress={() => sendTemplate(t.name)} style={{ padding: 14, borderRadius: 10, gap: 6, backgroundColor: colors.bg }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-              <T weight={font.semi}>{t.name}</T>
-              <View style={{ backgroundColor: '#dcfce7', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 2 }}><T size={11} weight={font.semi} color="#15803d">Approved</T></View>
-            </View>
-            <T size={12} color={colors.muted}>{t.body}</T>
-          </Pressable>
-        ))}
+      <Sheet visible={tplOpen} onClose={() => setTplOpen(false)} title="Send the approved template">
+        <View style={{ padding: 10, gap: 14 }}>
+          {main.template ? (
+            <>
+              <T size={13} color={colors.muted}>{main.template.name} · {main.template.language}</T>
+              <View style={{ backgroundColor: colors.bubbleOut, borderRadius: 12, padding: 12 }}><T size={13} style={{ lineHeight: 19 }}>{tplPreview}</T></View>
+              <Button kind="primary" label={busy ? 'Sending…' : 'Send template'} icon="send" onPress={sendTemplate} disabled={busy} />
+            </>
+          ) : (
+            <>
+              <T color={colors.muted}>Choose an approved template in Settings first.</T>
+              <Button label="Open Settings" onPress={() => { setTplOpen(false); go({ name: 'settings' }); }} />
+            </>
+          )}
+        </View>
       </Sheet>
 
       <Sheet visible={infoOpen && !!current} onClose={() => setInfoOpen(false)} title="Patient details">

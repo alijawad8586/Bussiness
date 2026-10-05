@@ -1,11 +1,11 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors, font } from '../theme';
 import { Route, useStore } from '../store';
-import { CountBadge, Icon, IconName, Sheet, T, useLayout } from './ui';
+import { CountBadge, Icon, IconName, T, useLayout } from './ui';
 
-type Tab = 'dashboard' | 'inbox' | 'messages' | 'reports' | 'settings' | 'api' | 'sheet' | 'agent';
+type Tab = 'dashboard' | 'inbox' | 'messages' | 'reports' | 'settings';
 
 const NAV: { key: Tab; label: string; short: string; icon: IconName }[] = [
   { key: 'dashboard', label: 'Dashboard', short: 'Home', icon: 'grid' },
@@ -13,16 +13,10 @@ const NAV: { key: Tab; label: string; short: string; icon: IconName }[] = [
   { key: 'messages', label: 'Messages', short: 'Messages', icon: 'list' },
   { key: 'reports', label: 'Reports', short: 'Reports', icon: 'bar-chart-2' },
   { key: 'settings', label: 'Settings', short: 'Settings', icon: 'sliders' },
-  { key: 'api', label: 'API Cloud', short: 'API Cloud', icon: 'cloud' },
-  { key: 'sheet', label: 'Upload Sheet', short: 'Sheet', icon: 'file-text' },
-  { key: 'agent', label: 'Agent AI', short: 'Agent AI', icon: 'cpu' },
 ];
 
-// Phone bottom bar: four main pages plus "More" for the rest.
-const BOTTOM: Tab[] = ['dashboard', 'inbox', 'reports', 'agent'];
-
 export function tabOf(r: Route): Tab {
-  return r.name === 'report' ? 'reports' : r.name;
+  return r.name === 'report' ? 'reports' : r.name === 'connect' ? 'settings' : r.name;
 }
 
 function Logo({ small }: { small?: boolean }) {
@@ -41,43 +35,41 @@ function Logo({ small }: { small?: boolean }) {
 }
 
 function ProductChip() {
-  const { creds } = useStore();
+  const { server } = useStore();
+  const w = server.whatsapp;
   return (
     <View style={s.chip}>
-      <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: colors.green }} />
-      <T size={13} weight={font.medium} color={colors.dark}>Product ID: {creds?.productId}</T>
+      <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: w?.connected ? colors.green : '#ef4444' }} />
+      <T size={13} weight={font.medium} color={colors.dark}>{w ? `Product ID: ${w.productId}` : 'WhatsApp not connected'}</T>
     </View>
   );
 }
 
 function Sidebar() {
-  const { route, go, unreadCount, creds, disconnect, user, logOut } = useStore();
+  const { route, go, unreadCount, server, user, logOut } = useStore();
   const active = tabOf(route);
+  const w = server.whatsapp;
   return (
     <View style={s.sidebar}>
       <View style={{ paddingBottom: 20, paddingLeft: 4 }}><Logo /></View>
       {NAV.map((n) => {
         const on = n.key === active;
         return (
-          <React.Fragment key={n.key}>
-          {n.key === 'api' ? <T size={11} weight={font.semi} color={colors.placeholder} style={{ paddingHorizontal: 12, paddingTop: 12, paddingBottom: 2 }}>AI TOOLS</T> : null}
-          <Pressable onPress={() => go({ name: n.key } as Route)} style={[s.navItem, on && { backgroundColor: colors.tint }]}>
+          <Pressable key={n.key} onPress={() => go({ name: n.key } as Route)} style={[s.navItem, on && { backgroundColor: colors.tint }]}>
             <Icon name={n.icon} size={20} color={on ? colors.primary : colors.muted} />
             <T size={14} weight={on ? font.semi : font.medium} color={on ? colors.primary : colors.text} style={{ flex: 1 }}>{n.label}</T>
             {n.key === 'inbox' && unreadCount > 0 ? <CountBadge n={unreadCount} size={20} /> : null}
           </Pressable>
-          </React.Fragment>
         );
       })}
       <View style={{ flex: 1 }} />
-      <Pressable onPress={disconnect} style={s.apiBox} accessibilityLabel="Disconnect WhatsApp API">
+      <View style={s.apiBox}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-          <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: colors.green }} />
-          <T size={13} weight={font.medium}>WhatsApp API connected</T>
+          <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: w?.connected ? colors.green : '#ef4444' }} />
+          <T size={13} weight={font.medium}>{w?.connected ? 'WhatsApp API connected' : 'WhatsApp not connected'}</T>
         </View>
-        <T size={12} color={colors.muted}>Product ID · {creds?.productId}</T>
-        <T size={11} color={colors.primary} weight={font.medium}>Tap to disconnect</T>
-      </Pressable>
+        <T size={12} color={colors.muted}>{w ? `Product ID · ${w.productId}` : 'Connect in Settings'}</T>
+      </View>
       <View style={[s.apiBox, { flexDirection: 'row', alignItems: 'center', gap: 8 }]}>
         <View style={{ flex: 1 }}>
           <T size={13} weight={font.medium} numberOfLines={1}>{user?.name}</T>
@@ -90,18 +82,15 @@ function Sidebar() {
 }
 
 function BottomNav() {
-  const { route, go, unreadCount, disconnect, logOut, user } = useStore();
-  const [more, setMore] = useState(false);
+  const { route, go, unreadCount } = useStore();
   const active = tabOf(route);
-  const inMore = !BOTTOM.includes(active);
-  const items = [...BOTTOM.map((k) => NAV.find((n) => n.key === k)!), { key: 'more' as const, short: 'More', icon: 'menu' as IconName }];
   return (
     <SafeAreaView edges={['bottom']} style={s.bottom}>
       <View style={{ flexDirection: 'row' }}>
-        {items.map((n) => {
-          const on = n.key === 'more' ? inMore : n.key === active;
+        {NAV.map((n) => {
+          const on = n.key === active;
           return (
-            <Pressable key={n.key} onPress={() => (n.key === 'more' ? setMore(true) : go({ name: n.key } as Route))} style={s.tab} accessibilityRole="tab">
+            <Pressable key={n.key} onPress={() => go({ name: n.key } as Route)} style={s.tab} accessibilityRole="tab">
               <View>
                 <Icon name={n.icon} size={22} color={on ? colors.primary : colors.muted} />
                 {n.key === 'inbox' && unreadCount > 0 ? (
@@ -113,23 +102,28 @@ function BottomNav() {
           );
         })}
       </View>
-      <Sheet visible={more} onClose={() => setMore(false)} title={user ? `${user.name} · ${user.email}` : 'More'}>
-        {NAV.filter((n) => !BOTTOM.includes(n.key)).map((n) => (
-          <Pressable key={n.key} onPress={() => { setMore(false); go({ name: n.key } as Route); }} style={s.moreRow}>
-            <Icon name={n.icon} size={20} color={colors.primary} />
-            <T weight={font.medium}>{n.label}</T>
-          </Pressable>
-        ))}
-        <Pressable onPress={() => { setMore(false); disconnect(); }} style={s.moreRow}>
-          <Icon name="link-2" size={20} color={colors.muted} />
-          <T weight={font.medium}>Disconnect WhatsApp API</T>
-        </Pressable>
-        <Pressable onPress={() => { setMore(false); logOut(); }} style={s.moreRow}>
-          <Icon name="log-out" size={20} color={colors.danger} />
-          <T weight={font.medium} color={colors.danger}>Log out</T>
-        </Pressable>
-      </Sheet>
     </SafeAreaView>
+  );
+}
+
+/** Red/amber banners that tell the user something needs attention. */
+function Banners() {
+  const { server, dataError, go } = useStore();
+  const w = server.whatsapp;
+  return (
+    <>
+      {w && !w.connected ? (
+        <View style={[s.banner, { backgroundColor: '#fee2e2' }]}>
+          <T size={13} color={colors.danger} style={{ flex: 1 }}>{w.error || 'WhatsApp is disconnected.'}</T>
+          <T size={13} weight={font.semi} color={colors.danger} onPress={() => go({ name: 'connect' })}>Reconnect</T>
+        </View>
+      ) : null}
+      {dataError ? (
+        <View style={[s.banner, { backgroundColor: '#fef3c7' }]}>
+          <T size={13} color="#b45309" style={{ flex: 1 }}>{/index/i.test(dataError) ? 'Some data needs a database index. Run: firebase deploy --only firestore:indexes' : `Could not load some data: ${dataError}`}</T>
+        </View>
+      ) : null}
+    </>
   );
 }
 
@@ -138,7 +132,6 @@ export function Shell({
   title, subtitle, children, scroll = true,
 }: { title: string; subtitle?: string; children: React.ReactNode; scroll?: boolean }) {
   const { wide } = useLayout();
-  const { creds } = useStore();
   const header = (
     <View style={[s.top, !wide && { marginBottom: 4 }]}>
       <View style={{ flex: 1, gap: 4 }}>
@@ -151,6 +144,7 @@ export function Shell({
   );
   const body = (
     <View style={{ gap: 20, padding: wide ? 32 : 16, paddingTop: wide ? 28 : 12, flex: scroll ? undefined : 1 }}>
+      <Banners />
       {header}
       {children}
     </View>
@@ -176,7 +170,7 @@ const s = StyleSheet.create({
   chip: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 20, backgroundColor: colors.tint },
   avatar: { width: 36, height: 36, borderRadius: 18, backgroundColor: colors.dark, alignItems: 'center', justifyContent: 'center' },
   bottom: { backgroundColor: '#fff', borderTopWidth: 1, borderTopColor: colors.border },
-  moreRow: { flexDirection: 'row', alignItems: 'center', gap: 14, padding: 14, borderRadius: 10 },
   tab: { flex: 1, alignItems: 'center', gap: 3, paddingVertical: 8 },
   tabBadge: { position: 'absolute', top: -4, right: -10, minWidth: 16, height: 16, borderRadius: 8, backgroundColor: colors.green, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 3 },
+  banner: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 12, borderRadius: 10 },
 });

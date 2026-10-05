@@ -6,10 +6,7 @@ import { StoreProvider, useStore } from './src/store';
 import { colors } from './src/theme';
 import { Toast } from './src/components/Toast';
 import Auth from './src/screens/Auth';
-import Login from './src/screens/Login';
-import ApiCloud from './src/screens/ApiCloud';
-import SheetScreen from './src/screens/SheetScreen';
-import Agent from './src/screens/Agent';
+import Connect from './src/screens/Connect';
 import Dashboard from './src/screens/Dashboard';
 import Inbox from './src/screens/Inbox';
 import Messages from './src/screens/Messages';
@@ -18,8 +15,8 @@ import ReportDetail from './src/screens/ReportDetail';
 import Settings from './src/screens/Settings';
 
 function Router() {
-  const { ready, user, creds, route } = useStore();
-  if (!ready) {
+  const { authReady, user, loaded, server, route } = useStore();
+  if (!authReady || (user && !loaded)) {
     return (
       <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.bg }}>
         <ActivityIndicator color={colors.primary} />
@@ -27,16 +24,15 @@ function Router() {
     );
   }
   if (!user) return <Auth />;
-  if (!creds) return <Login />;
+  // first time: WhatsApp must be connected before anything else
+  if (!server.whatsapp) return <Connect canCancel={false} />;
   switch (route.name) {
+    case 'connect': return <Connect canCancel />;
     case 'inbox': return <Inbox openId={route.open} />;
     case 'messages': return <Messages initialQuery={route.query} />;
     case 'reports': return <Reports />;
     case 'report': return <ReportDetail id={route.id} />;
-    case 'settings': return <Settings />;
-    case 'api': return <ApiCloud />;
-    case 'sheet': return <SheetScreen />;
-    case 'agent': return <Agent />;
+    case 'settings': return <Settings initialTab={route.tab} />;
     default: return <Dashboard />;
   }
 }
