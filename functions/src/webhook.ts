@@ -94,7 +94,8 @@ async function onStatus(uid: string, st: any, deps: Deps): Promise<boolean> {
 
 async function onInbound(uid: string, m: any, profiles: any[], deps: Deps): Promise<boolean> {
   const waId = String(m.id ?? '');
-  const phone = String(m.from ?? '').replace(/\D/g, '');
+  // Meta may leave `from` out and only list the person in `contacts`, so fall back to that
+  const phone = String(m.from || profiles.find((p) => p?.wa_id)?.wa_id || '').replace(/\D/g, '');
   if (!waId || !phone) return false;
   const body = textOf(m);
   const now = Timestamp.fromDate(deps.now());
