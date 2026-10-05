@@ -5,15 +5,17 @@ import { db, loadSecrets, loadServer, mainRef, phoneIndexRef, requireWhatsApp, s
 import { AppError } from './types.js';
 
 const str = (v: unknown, max = 500) => String(v ?? '').trim().slice(0, max);
+/** Meta IDs are plain numbers. Spaces, +, - and similar are ignored. */
+const digits = (v: unknown, max = 40) => String(v ?? '').replace(/\D/g, '').slice(0, max);
 
 export async function connectWhatsApp(uid: string, input: { productId: string; wabaId: string; phoneNumberId: string; token: string }, deps: Deps) {
   const productId = str(input.productId, 60).toUpperCase();
-  const wabaId = str(input.wabaId, 40);
-  const phoneNumberId = str(input.phoneNumberId, 40);
+  const wabaId = digits(input.wabaId);
+  const phoneNumberId = digits(input.phoneNumberId);
   const token = str(input.token, 1000);
   if (!productId) throw new AppError('invalid-argument', 'Enter your Product ID.');
-  if (!/^\d{5,}$/.test(wabaId)) throw new AppError('invalid-argument', 'WhatsApp Business Account ID should be digits only.');
-  if (!/^\d{5,}$/.test(phoneNumberId)) throw new AppError('invalid-argument', 'Phone Number ID should be digits only.');
+  if (!/^\d{5,}$/.test(wabaId)) throw new AppError('invalid-argument', 'Enter the WhatsApp Business Account ID from Meta (numbers only).');
+  if (!/^\d{5,}$/.test(phoneNumberId)) throw new AppError('invalid-argument', 'Enter the Phone Number ID from Meta (numbers only). It is not your phone number.');
   if (token.length < 20) throw new AppError('invalid-argument', 'The access token looks too short.');
 
   // Prove the credentials work before saving anything.

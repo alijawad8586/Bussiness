@@ -194,3 +194,12 @@ test('saving the agent: key required, custom URL checked, test call works', asyn
   h.aiResult = () => new AiError('401: invalid key', false);
   await assert.rejects(testAgent(h.uid, h.deps), /rejected this API key/);
 });
+
+test('connect accepts IDs pasted with spaces, plus signs or dashes', async () => {
+  const h = harness();
+  await connectWhatsApp(h.uid, { productId: 'p', wabaId: ' 1234 5678 ', phoneNumberId: '+1234-567-890', token: 'good-token-1234567890123' }, h.deps);
+  const w = (await serverRef(h.uid).get()).data()!.whatsapp;
+  assert.equal(w.phoneNumberId, '1234567890');
+  assert.equal(w.wabaId, '12345678');
+  await assert.rejects(connectWhatsApp(h.uid, { productId: 'p', wabaId: '12', phoneNumberId: '99', token: 'good-token-1234567890123' }, h.deps), /numbers only/);
+});

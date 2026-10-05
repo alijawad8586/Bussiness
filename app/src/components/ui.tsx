@@ -149,8 +149,8 @@ export function SearchBox({
 }
 
 export function Field({
-  label, icon, error, ...props
-}: { label: string; icon: IconName; error?: string } & TextInputProps) {
+  label, icon, error, hint, ...props
+}: { label: string; icon: IconName; error?: string; hint?: string } & TextInputProps) {
   const [focus, setFocus] = useState(false);
   return (
     <View style={{ gap: 8 }}>
