@@ -1,6 +1,5 @@
 // Shared helpers for the API routes. The business logic lives in _core (built from functions/src).
 const crypto = require('node:crypto');
-const { getAuth } = require('firebase-admin/auth');
 const { waitUntil } = require('@vercel/functions');
 const { ensureAdmin, workerSecret, NOT_CONFIGURED } = require('./_core/admin.js');
 const { AppError } = require('./_core/types.js');
@@ -113,16 +112,37 @@ function fail(res, e) {
   return json(res, 500, { error: { code: 'internal', message: 'Something went wrong on our side. Please try again.', detail } });
 }
 
-/** Returns the signed-in user's id from the "Authorization: Bearer <Firebase ID token>" header. */
+// Public web API key of the Firebase project (the same one the app ships with). Not a secret.
+const WEB_API_KEY = process.env.FIREBASE_WEB_API_KEY || 'AIzaSyD2lscjhXXSD-wQj-eodgis84Q4X89Wb2g';
+
+/**
+ * Returns the signed-in user's id from the "Authorization: Bearer <Firebase ID token>" header.
+ * Firebase checks the token itself (signature, expiry, disabled or deleted users) through its own
+ * "accounts:lookup" endpoint, so no extra library is needed (the Admin auth module breaks on Vercel).
+ */
 async function authUid(req) {
   const h = String(req.headers.authorization || '');
   if (!h.startsWith('Bearer ')) throw new AppError('unauthenticated', 'Please sign in.');
   ensureAdmin();
+  const emu = process.env.FIREBASE_AUTH_EMULATOR_HOST;
+  const url = emu
+    ? `http://${emu}/identitytoolkit.googleapis.com/v1/accounts:lookup?key=${WEB_API_KEY}`
+    : `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${WEB_API_KEY}`;
+  let r;
   try {
-    return (await getAuth().verifyIdToken(h.slice(7))).uid;
+    r = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ idToken: h.slice(7) }),
+      signal: AbortSignal.timeout(10000),
+    });
   } catch {
-    throw new AppError('unauthenticated', 'Your session expired. Please sign in again.');
+    throw new AppError('unavailable', 'Could not check your login. Please try again.');
   }
+  const body = await r.json().catch(() => ({}));
+  const uid = body && body.users && body.users[0] && body.users[0].localId;
+  if (!r.ok || !uid) throw new AppError('unauthenticated', 'Your session expired. Please sign in again.');
+  return String(uid);
 }
 
 module.exports = { ensureAdmin, makeDeps, originOf, verifyWorkerToken, readBody, json, fail, authUid, NOT_CONFIGURED };
