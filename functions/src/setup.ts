@@ -44,7 +44,20 @@ export async function connectWhatsApp(uid: string, input: { productId: string; w
       whatsapp: { connected: true, productId, wabaId, phoneNumberId, displayNumber: check.displayNumber, verifiedName: check.verifiedName, error: null },
     }, { merge: true });
   });
-  return { displayNumber: check.displayNumber, verifiedName: check.verifiedName };
+  const sub = await subscribeWebhook(uid, deps);
+  return { displayNumber: check.displayNumber, verifiedName: check.verifiedName, webhookSubscribed: sub.ok, subscribeError: sub.error };
+}
+
+/** Asks WhatsApp to deliver this account's replies and delivery receipts to our webhook. Safe to repeat. */
+export async function subscribeWebhook(uid: string, deps: Deps): Promise<{ ok: boolean; error: string | null }> {
+  const w = await requireWhatsApp(uid);
+  if (!deps.wa.subscribeApp) return { ok: false, error: 'Not supported' };
+  const r = await deps.wa.subscribeApp({ wabaId: w.wabaId, token: w.token });
+  const error = r.ok ? null : classifyWaError(r.error).kind === 'auth'
+    ? 'The access token is missing the whatsapp_business_management permission.'
+    : r.error.message;
+  await serverRef(uid).set({ whatsapp: { webhookSubscribed: r.ok, subscribeError: error } }, { merge: true });
+  return { ok: r.ok, error };
 }
 
 export async function listTemplates(uid: string, deps: Deps) {

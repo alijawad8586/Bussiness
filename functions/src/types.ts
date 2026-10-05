@@ -50,7 +50,12 @@ export interface ServerSettings {
     displayNumber: string;
     verifiedName: string;
     error?: string | null;
+    /** true when WhatsApp accepted our app as the receiver of this account's events */
+    webhookSubscribed?: boolean;
+    subscribeError?: string | null;
   };
+  /** last time WhatsApp called our webhook for this account */
+  webhook?: { lastAt: Timestamp; inbound: number; statuses: number };
   agent?: { provider: string; model: string; baseUrl?: string; hasKey: boolean; lastError?: string | null };
 }
 

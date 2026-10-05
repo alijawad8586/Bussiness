@@ -203,3 +203,19 @@ test('connect accepts IDs pasted with spaces, plus signs or dashes', async () =>
   assert.equal(w.wabaId, '12345678');
   await assert.rejects(connectWhatsApp(h.uid, { productId: 'p', wabaId: '12', phoneNumberId: '99', token: 'good-token-1234567890123' }, h.deps), /numbers only/);
 });
+
+test('webhook remembers when WhatsApp last called, and connecting subscribes the app to the account', async () => {
+  const h = harness();
+  const c = await connectWhatsApp(h.uid, { productId: 'P', wabaId: '1234567', phoneNumberId: '7654321', token: 'good-token-for-tests-123456' }, h.deps);
+  assert.equal(c.webhookSubscribed, true);
+  assert.deepEqual(h.wa.subscribed, ['1234567']);
+  assert.equal((await serverRef(h.uid).get()).data()!.whatsapp.webhookSubscribed, true);
+
+  await handleWebhook({ entry: [{ changes: [{ field: 'messages', value: {
+    metadata: { phone_number_id: '7654321' }, contacts: [{ wa_id: '971586141832', profile: { name: 'Ali Jawad' } }],
+    messages: [{ id: 'wamid.in1', from: '971586141832', timestamp: '1', type: 'text', text: { body: 'hi' } }],
+  } }] }] }, h.deps);
+  const w = (await serverRef(h.uid).get()).data()!.webhook;
+  assert.equal(w.inbound, 1);
+  assert.ok(w.lastAt);
+});

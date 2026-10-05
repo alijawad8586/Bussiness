@@ -11,6 +11,8 @@ export interface WaApi {
   sendText(a: { phoneNumberId: string; token: string; to: string; text: string }): Promise<SendResult>;
   listTemplates(a: { wabaId: string; token: string }): Promise<{ ok: true; templates: TemplateRef[] } | { ok: false; error: WaError }>;
   verifyNumber(a: { phoneNumberId: string; token: string }): Promise<{ ok: true; displayNumber: string; verifiedName: string } | { ok: false; error: WaError }>;
+  /** Tells WhatsApp to send this account's events (replies, delivery receipts) to the app's webhook. */
+  subscribeApp?(a: { wabaId: string; token: string }): Promise<{ ok: true } | { ok: false; error: WaError }>;
 }
 
 async function call(path: string, token: string, init: RequestInit = {}): Promise<{ ok: true; json: any } | { ok: false; error: WaError }> {
@@ -85,5 +87,9 @@ export const realWa: WaApi = {
     const r = await call(`/${encodeURIComponent(phoneNumberId)}?fields=display_phone_number,verified_name`, token);
     if (!r.ok) return r;
     return { ok: true, displayNumber: String(r.json?.display_phone_number ?? ''), verifiedName: String(r.json?.verified_name ?? '') };
+  },
+  async subscribeApp({ wabaId, token }) {
+    const r = await call(`/${encodeURIComponent(wabaId)}/subscribed_apps`, token, { method: 'POST' });
+    return r.ok ? { ok: true } : r;
   },
 };

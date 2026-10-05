@@ -30,6 +30,8 @@ export class FakeWa implements WaApi {
     const e = this.fail(a.to, this.calls.length);
     return e ? { ok: false, error: e } : { ok: true, waMessageId: `wamid.t${++this.n}.${a.to}` };
   }
+  subscribed: string[] = [];
+  async subscribeApp(a: { wabaId: string; token: string }) { this.subscribed.push(a.wabaId); return { ok: true as const }; }
   async listTemplates() { return { ok: true as const, templates: [TEMPLATE] }; }
   async verifyNumber(a: { phoneNumberId: string; token: string }) {
     return a.token.startsWith('good')

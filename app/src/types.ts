@@ -18,7 +18,9 @@ export interface MainSettings {
 }
 
 export interface ServerSettings {
-  whatsapp?: { connected: boolean; productId: string; wabaId: string; phoneNumberId: string; displayNumber: string; verifiedName: string; error?: string | null };
+  whatsapp?: { connected: boolean; productId: string; wabaId: string; phoneNumberId: string; displayNumber: string; verifiedName: string; error?: string | null; webhookSubscribed?: boolean; subscribeError?: string | null };
+  /** when WhatsApp last called our webhook (a Firestore timestamp) */
+  webhook?: { lastAt?: { toMillis(): number }; inbound?: number; statuses?: number };
   agent?: { provider: string; model: string; baseUrl?: string; hasKey: boolean; lastError?: string | null };
 }
 

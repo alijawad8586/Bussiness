@@ -3,7 +3,7 @@ import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { detectIntent } from './agentSafety.js';
 import { applyTransition } from './messaging.js';
 import { classifyWaError } from './waErrors.js';
-import { col, loadMain, phoneIndexRef, type Deps } from './repo.js';
+import { col, loadMain, phoneIndexRef, serverRef, type Deps } from './repo.js';
 import type { ContactDoc, MessageDoc, MsgStatus } from './types.js';
 
 /** Meta signs every webhook call with the app secret. Returns true when the signature is right. */
@@ -35,6 +35,7 @@ export interface WebhookResult {
 
 export async function handleWebhook(payload: any, deps: Deps): Promise<WebhookResult> {
   const result: WebhookResult = { inbound: 0, statuses: 0, failures: 0 };
+  const touched = new Map<string, { inbound: number; statuses: number }>();
   for (const entry of payload?.entry ?? []) {
     for (const change of entry?.changes ?? []) {
       if (change?.field !== 'messages') continue;
@@ -43,11 +44,16 @@ export async function handleWebhook(payload: any, deps: Deps): Promise<WebhookRe
       if (!phoneNumberId) continue;
       const owner = await phoneIndexRef(phoneNumberId).get();
       const uid = owner.data()?.uid as string | undefined;
-      if (!uid) continue; // a number we do not manage
+      if (!uid) {
+        console.warn('webhook for a phone number id that is not connected to any account');
+        continue; // a number we do not manage
+      }
+      const seen = touched.get(uid) ?? { inbound: 0, statuses: 0 };
+      touched.set(uid, seen);
 
       for (const st of v.statuses ?? []) {
         try {
-          if (await onStatus(uid, st, deps)) result.statuses++;
+          if (await onStatus(uid, st, deps)) { result.statuses++; seen.statuses++; }
         } catch (e) {
           console.error('webhook status failed', e);
           result.failures++;
@@ -55,13 +61,17 @@ export async function handleWebhook(payload: any, deps: Deps): Promise<WebhookRe
       }
       for (const m of v.messages ?? []) {
         try {
-          if (await onInbound(uid, m, v.contacts ?? [], deps)) result.inbound++;
+          if (await onInbound(uid, m, v.contacts ?? [], deps)) { result.inbound++; seen.inbound++; }
         } catch (e) {
           console.error('webhook message failed', e);
           result.failures++;
         }
       }
     }
+  }
+  // Remember that WhatsApp reached us, so the Settings screen can show whether receiving works.
+  for (const [uid, n] of touched) {
+    await serverRef(uid).set({ webhook: { lastAt: Timestamp.fromDate(deps.now()), inbound: n.inbound, statuses: n.statuses } }, { merge: true }).catch(() => {});
   }
   return result;
 }

@@ -21,6 +21,53 @@ const PROVIDERS = [
 
 const tplKey = (t: TemplateRef) => `${t.name}|${t.language}`;
 
+function ago(ms: number) {
+  const m = Math.round((Date.now() - ms) / 60000);
+  return m < 1 ? 'just now' : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} days ago`;
+}
+
+/** Shows whether WhatsApp can reach us (replies and delivery receipts), and how to fix it when it cannot. */
+function WebhookBox() {
+  const { server, showToast } = useStore();
+  const [busy, setBusy] = useState(false);
+  const last = server.webhook?.lastAt?.toMillis?.() ?? 0;
+  const subscribed = server.whatsapp?.webhookSubscribed;
+  const recheck = async () => {
+    setBusy(true);
+    try {
+      const r = await api.subscribeWebhook();
+      showToast(r.ok ? 'Done. WhatsApp will now send replies and receipts to this app.' : `WhatsApp refused: ${r.error ?? 'unknown reason'}`);
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : 'Could not check');
+    } finally {
+      setBusy(false);
+    }
+  };
+  const Step = ({ n, children }: { n: number; children: React.ReactNode }) => (
+    <T size={12} color={colors.muted} style={{ lineHeight: 18 }}>{n}. {children}</T>
+  );
+  return (
+    <View style={{ gap: 10 }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+        <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: last ? colors.green : '#f59e0b' }} />
+        <T size={13} weight={font.semi}>{last ? `Receiving works · last event ${ago(last)}` : 'No event from WhatsApp received yet'}</T>
+      </View>
+      {subscribed === false ? <T size={12} color={colors.danger}>WhatsApp did not accept this app for your account{server.whatsapp?.subscribeError ? `: ${server.whatsapp.subscribeError}` : ''}.</T> : null}
+      {!last ? (
+        <>
+          <T size={12} color={colors.muted}>To receive patient replies and delivery status, set this in Meta (your app → WhatsApp → Configuration → Webhook):</T>
+          <Step n={1}>Callback URL:</Step>
+          <Text selectable style={{ fontSize: 12, color: colors.dark, backgroundColor: colors.tint, padding: 10, borderRadius: 8 }}>{WEBHOOK_URL}</Text>
+          <Step n={2}>Verify token: the same text as WA_VERIFY_TOKEN in your Vercel settings. Click “Verify and save”.</Step>
+          <Step n={3}>Under “Webhook fields”, tick “messages” (Subscribe).</Step>
+          <Step n={4}>Send a WhatsApp message from an allowed phone to your test number. This box turns green when it arrives.</Step>
+        </>
+      ) : null}
+      <Button label={busy ? 'Checking…' : 'Check and fix receiving'} icon="refresh-cw" onPress={recheck} disabled={busy} />
+    </View>
+  );
+}
+
 export default function Settings({ initialTab = 'source' }: { initialTab?: 'source' | 'agent' }) {
   const { go, user, logOut, consent, openPrivacy } = useStore();
   const { wide } = useLayout();
@@ -229,12 +276,7 @@ function SourceTab() {
             <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: connected ? colors.green : '#ef4444' }} />
             <T weight={font.semi}>{connected ? `WhatsApp connected · ${server.whatsapp?.displayNumber ?? ''}` : 'WhatsApp is not connected'}</T>
           </View>
-          {connected ? (
-            <>
-              <T size={12} color={colors.muted}>To receive patient replies, add this webhook in your Meta app (WhatsApp → Configuration) with the verify token from functions/.env and subscribe to “messages”:</T>
-              <Text selectable style={{ fontSize: 12, color: colors.dark, backgroundColor: colors.tint, padding: 10, borderRadius: 8 }}>{WEBHOOK_URL}</Text>
-            </>
-          ) : null}
+          {connected ? <WebhookBox /> : null}
         </Card>
 
         <Card style={{ gap: 16 }}>
