@@ -58,7 +58,7 @@ export default function Reports() {
   const best = campaigns.reduce<Campaign | null>((b, c) => (!b || rateOf(c) > rateOf(b) ? c : b), null);
 
   return (
-    <Shell title="Reports" subtitle="Open a report to see detailed delivery analysis">
+    <Shell title="Reports">
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 16 }}>
         <Summary icon="file-text" bg={colors.blueBg} color={colors.blue} label="Reports generated" value={String(campaigns.length)} note="Every upload that sent messages" />
         <Summary icon="send" bg={colors.tint} color={colors.primary} label="Messages sent" value={totalSent.toLocaleString()} note="Across all reports" />

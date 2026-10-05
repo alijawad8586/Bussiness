@@ -40,30 +40,26 @@ function ConversationRow({ c, active, onPress }: { c: Contact; active: boolean; 
   );
 }
 
-function Details({ c, onViewMessages, onClose }: { c: Contact; onViewMessages: () => void; onClose?: () => void }) {
-  const row = (k: string, v: string) => <View style={{ gap: 5 }}><T size={12} weight={font.medium} color={colors.muted}>{k}</T><T weight={font.medium}>{v || '—'}</T></View>;
+function Details({ c, onClose }: { c: Contact; onClose?: () => void }) {
+  const row = (k: string, v: string) => <View style={{ gap: 4 }}><T size={12} color={colors.muted}>{k}</T><T weight={font.medium}>{v}</T></View>;
   return (
-    <View style={{ gap: 18, flex: 1 }}>
+    <View style={{ gap: 20, flex: 1 }}>
       {onClose ? (
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
           <T size={15} weight={font.semi}>Contact info</T>
           <Pressable onPress={onClose} hitSlop={10} accessibilityRole="button" accessibilityLabel="Close contact info"><Icon name="x" size={20} color={colors.muted} /></Pressable>
         </View>
       ) : null}
-      <View style={{ alignItems: 'center', gap: 10 }}>
-        <Avatar name={c.name || c.phone} size={64} />
-        <T size={17} weight={font.semi}>{c.name || 'Unknown patient'}</T>
-        <T size={13} color={colors.muted}>{phoneLabel(c.phone)}</T>
+      <View style={{ alignItems: 'center', gap: 8 }}>
+        <Avatar name={c.name || c.phone} size={72} />
+        <T size={17} weight={font.semi}>{c.name || phoneLabel(c.phone)}</T>
       </View>
-      {row('Phone (WhatsApp)', phoneLabel(c.phone))}
-      {row('Doctor', c.doctor)}
-      {row('Source', c.rowNumber ? `Uploaded sheet · row ${c.rowNumber}` : c.lastInboundAt ? 'Started the chat themselves' : 'Added by hand')}
-      {c.lastInboundAt ? row('Last wrote to you', new Date(c.lastInboundAt).toLocaleString()) : null}
-      {c.whatsapp === 'invalid' ? <T size={13} weight={font.semi} color={colors.danger}>This number is not on WhatsApp</T> : null}
-      {c.lastStatus ? <View style={{ gap: 5 }}><T size={12} weight={font.medium} color={colors.muted}>Last message status</T><MsgBadge status={c.lastStatus} /></View> : null}
-      {c.optOut ? <T size={13} weight={font.semi} color={colors.danger}>Patient asked to stop messages</T> : null}
-      <View style={{ flex: 1 }} />
-      <Button label="View in Messages" icon="chevron-right" onPress={onViewMessages} />
+      {row('Phone', phoneLabel(c.phone))}
+      {c.doctor ? row('Doctor', c.doctor) : null}
+      {c.lastInboundAt ? row('Last message from patient', new Date(c.lastInboundAt).toLocaleString()) : null}
+      {c.whatsapp === 'invalid' ? <T size={13} weight={font.semi} color={colors.danger}>Not on WhatsApp</T> : null}
+      {c.optOut ? <T size={13} weight={font.semi} color={colors.danger}>Asked to stop messages</T> : null}
+      {c.needsHuman ? <T size={13} weight={font.semi} color={colors.danger}>Needs staff</T> : null}
     </View>
   );
 }
@@ -81,12 +77,14 @@ export default function Inbox({ openId }: { openId?: string }) {
   const [q, setQ] = useState('');
   const [tab, setTab] = useState<Tab>('All');
   const [selected, setSelected] = useState<string | null>(openId ?? null);
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [saved, setSaved] = useState<Message[]>([]);
+  // Messages you just sent show at once, before the server confirms them
+  const [pending, setPending] = useState<Message[]>([]);
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
   const [tplOpen, setTplOpen] = useState(false);
   const [infoOpen, setInfoOpen] = useState(false);
-  const [panelOpen, setPanelOpen] = useState(true);
+  const [panelOpen, setPanelOpen] = useState(false);
   const [newOpen, setNewOpen] = useState(false);
   const [cc, setCc] = useState('92');
   const [ccOther, setCcOther] = useState('');
@@ -99,12 +97,18 @@ export default function Inbox({ openId }: { openId?: string }) {
   const current = contacts.find((c) => c.id === selected) ?? null;
   useEffect(() => { if (wide && !selected && chats[0]) setSelected(chats[0].id); }, [wide, selected, chats]);
 
+  // a pending message disappears as soon as the saved copy arrives
+  const messages = useMemo(
+    () => [...saved, ...pending.filter((p) => p.status === 'failed' || !saved.some((m) => m.direction === 'out' && m.kind === p.kind && m.createdAt >= p.createdAt - 15_000))],
+    [saved, pending],
+  );
+
   // Live chat history for the open conversation
   useEffect(() => {
-    setMessages([]);
+    setSaved([]); setPending([]);
     if (!user || !selected) return;
     return onSnapshot(query(userCol(user.uid, 'messages'), where('contactId', '==', selected), orderBy('createdAt', 'asc'), limit(300)),
-      (s) => setMessages(s.docs.map((d) => messageOf(d.id, d.data()))), (e) => showToast(/index/i.test(e.message) ? 'The chat needs a database index. Run: firebase deploy --only firestore:indexes' : e.message));
+      (s) => setSaved(s.docs.map((d) => messageOf(d.id, d.data()))), (e) => showToast(/index/i.test(e.message) ? 'The chat needs a database index. Run: firebase deploy --only firestore:indexes' : e.message));
   }, [user, selected, showToast]);
 
   // Opening a chat marks it read
@@ -125,32 +129,39 @@ export default function Inbox({ openId }: { openId?: string }) {
 
   const inWindow = !!current?.lastInboundAt && Date.now() - current.lastInboundAt < WINDOW_MS;
 
+  const addPending = (c: Contact, kind: 'text' | 'template', text: string, template: string | null): string => {
+    const id = `local_${Date.now()}`;
+    setPending((p) => [...p, {
+      id, contactId: c.id, phone: c.phone, patient: c.name, doctor: c.doctor, direction: 'out', kind, by: 'manual', template, text,
+      status: 'queued', error: null, createdAt: Date.now(), outAt: null,
+    }]);
+    return id;
+  };
+  const failPending = (id: string, hint: string) =>
+    setPending((p) => p.map((m) => (m.id === id ? { ...m, status: 'failed', error: { code: 0, message: hint, hint } } : m)));
+
   const send = async () => {
     const text = draft.trim();
-    if (!current || !text || busy) return;
-    setBusy(true);
+    if (!current || !text) return;
+    setDraft('');
+    const id = addPending(current, 'text', text, null);
     try {
       const r = await api.sendManual({ contactId: current.id, text });
-      setDraft('');
-      if (r.status === 'failed') showToast('WhatsApp could not send this message. See the red mark.');
+      if (r.status === 'failed') failPending(id, 'WhatsApp could not send this message.');
     } catch (e) {
-      showToast(e instanceof Error ? e.message : 'Could not send');
-    } finally {
-      setBusy(false);
+      failPending(id, e instanceof Error ? e.message : 'Could not send');
     }
   };
 
   const sendTemplate = async () => {
-    if (!current) return;
-    setBusy(true);
+    if (!current || !main.template) return;
+    setTplOpen(false);
+    const id = addPending(current, 'template', renderBody(main.template.body, main.varCols.map((k) => current.fields[k] ?? '')), main.template.name);
     try {
       const r = await api.sendTemplate({ contactId: current.id });
-      showToast(r.status === 'failed' ? 'WhatsApp could not send the template.' : 'Template sent');
-      setTplOpen(false);
+      if (r.status === 'failed') failPending(id, 'WhatsApp could not send the template.');
     } catch (e) {
-      showToast(e instanceof Error ? e.message : 'Could not send');
-    } finally {
-      setBusy(false);
+      failPending(id, e instanceof Error ? e.message : 'Could not send');
     }
   };
 
@@ -205,9 +216,8 @@ export default function Inbox({ openId }: { openId?: string }) {
         <Avatar name={current.name || current.phone} size={40} />
         <View style={{ flex: 1, gap: 2 }}>
           <T size={15} weight={font.semi} numberOfLines={1}>{current.name || phoneLabel(current.phone)}</T>
-          <T size={12} color={colors.muted} numberOfLines={1}>{phoneLabel(current.phone)}{current.doctor ? `  ·  Patient of ${current.doctor}` : ''}</T>
+          <T size={12} color={colors.muted} numberOfLines={1}>{phoneLabel(current.phone)}</T>
         </View>
-        {wide && current.lastStatus ? <MsgBadge status={current.lastStatus} /> : null}
         <Pressable onPress={() => (xl ? setPanelOpen((v) => !v) : setInfoOpen(true))} hitSlop={10} accessibilityRole="button" accessibilityLabel="Contact info"><Icon name="info" size={20} color={xl && panelOpen ? colors.primary : colors.muted} /></Pressable>
       </View>
 
@@ -237,6 +247,8 @@ export default function Inbox({ openId }: { openId?: string }) {
                 </View>
               </View>
               {m.error ? <T size={11} color={colors.danger} style={{ maxWidth: '85%', marginTop: 3 }}>{m.error.hint}</T> : null}
+              {!out && m.agentOutcome === 'ai_failed' ? <T size={11} color={colors.danger} style={{ maxWidth: '85%', marginTop: 3 }}>AI could not reply{m.agentError ? `: ${m.agentError.slice(0, 120)}` : ''}</T> : null}
+              {!out && m.agentOutcome === 'rate_limited' ? <T size={11} color={colors.muted} style={{ marginTop: 3 }}>AI reply limit reached for this patient</T> : null}
             </View>
           );
         }}
@@ -271,11 +283,11 @@ export default function Inbox({ openId }: { openId?: string }) {
 
 
   return (
-    <Shell title="WhatsApp Inbox" subtitle={`Send and receive patient messages · ${unreadCount} unread`} scroll={false}>
+    <Shell title="WhatsApp Inbox" scroll={false}>
       <View style={{ flex: 1, flexDirection: 'row', gap: 16, height: boxH, minHeight: 0 }}>
         {showList ? listPane : null}
         {showChat ? chatPane : null}
-        {xl && panelOpen && current ? <Card style={{ width: 300, paddingVertical: 18 }}><Details c={current} onViewMessages={() => go({ name: 'messages', query: current.phone })} onClose={() => setPanelOpen(false)} /></Card> : null}
+        {xl && panelOpen && current ? <Card style={{ width: 300, paddingVertical: 18 }}><Details c={current} onClose={() => setPanelOpen(false)} /></Card> : null}
       </View>
 
       <Sheet visible={tplOpen} onClose={() => setTplOpen(false)} title="Send the approved template">
@@ -319,7 +331,7 @@ export default function Inbox({ openId }: { openId?: string }) {
       </Sheet>
 
       <Sheet visible={infoOpen && !!current} onClose={() => setInfoOpen(false)} title="Patient details">
-        <View style={{ padding: 10 }}>{current ? <Details c={current} onViewMessages={() => { setInfoOpen(false); go({ name: 'messages', query: current.phone }); }} /> : null}</View>
+        <View style={{ padding: 10 }}>{current ? <Details c={current} /> : null}</View>
       </Sheet>
     </Shell>
   );

@@ -37,7 +37,7 @@ export default function Dashboard() {
 
   if (!camp) {
     return (
-      <Shell title="Dashboard" subtitle="Your patient messaging at a glance">
+      <Shell title="Dashboard">
         <Card style={{ alignItems: 'center', gap: 14, padding: 40 }}>
           <Icon name="send" size={36} color={colors.placeholder} />
           <T size={16} weight={font.semi}>No messages sent yet</T>
@@ -53,7 +53,7 @@ export default function Dashboard() {
   const t = { delivered: s.delivered, failed: s.failed, notWa: s.notWhatsapp, pending: s.sent };
 
   return (
-    <Shell title="Dashboard" subtitle={`${nicename(camp.template.name)} · latest campaign${camp.status !== 'completed' ? ` (${camp.status})` : ''}`}>
+    <Shell title="Dashboard">
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 16 }}>
         <Stat icon="users" bg={colors.blueBg} iconColor={colors.blue} label="Total patients" value={patients === null ? '…' : n(patients)} note={lastSheet ? `From ${lastSheet.fileName}` : 'Uploaded contacts'} noteColor={colors.blue} />
         <Stat icon="send" bg={colors.tint} iconColor={colors.primary} label="Messages sent" value={n(sent)} note={`${n(camp.total)} in this campaign`} noteColor={colors.primary} />
@@ -64,14 +64,14 @@ export default function Dashboard() {
 
       <View style={{ flexDirection: wide ? 'row' : 'column', gap: 16 }}>
         <Card style={{ gap: 20, width: wide ? 440 : undefined }}>
-          <CardHeading title="Delivery overview" sub="Status of all messages sent" />
+          <CardHeading title="Delivery overview" />
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 24, flexWrap: 'wrap' }}>
             <Donut totals={t} centerValue={n(sent)} centerLabel="messages sent" />
             <Legend totals={t} />
           </View>
         </Card>
         <Card style={{ flex: wide ? 1 : undefined, gap: 20 }}>
-          <CardHeading title="Messages sent · last 7 days" sub="Daily sending volume" />
+          <CardHeading title="Messages sent · last 7 days" />
           {days.length ? <BarChart data={days} /> : <T color={colors.muted}>Loading…</T>}
         </Card>
       </View>
@@ -79,7 +79,7 @@ export default function Dashboard() {
       <Card style={{ padding: 0, overflow: 'hidden' }}>
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 24, paddingVertical: 18 }}>
           <T size={16} weight={font.semi}>Recent messages</T>
-          <T size={13} weight={font.medium} color={colors.primary} onPress={() => go({ name: 'messages' })}>View all →</T>
+          <T size={13} weight={font.medium} color={colors.primary} onPress={() => go({ name: 'reports' })}>View all →</T>
         </View>
         {recent.length ? <MessageTable rows={recent} showMessage={false} /> : <T color={colors.muted} style={{ padding: 24 }}>No messages yet.</T>}
       </Card>

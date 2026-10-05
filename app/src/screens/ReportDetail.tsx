@@ -99,7 +99,7 @@ export default function ReportDetail({ id }: { id: string }) {
   const running = c.status === 'running' || c.status === 'queued';
 
   return (
-    <Shell title={`${nicename(c.template.name)} · ${formatDate(c.createdAt)}`} subtitle={`Template: ${c.template.name}  ·  Source: ${c.sheetName}`}>
+    <Shell title={`${nicename(c.template.name)} · ${formatDate(c.createdAt)}`}>
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
         <Pressable onPress={() => go({ name: 'reports' })} style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }} accessibilityRole="button">
           <Icon name="arrow-left" size={16} color={colors.primary} />

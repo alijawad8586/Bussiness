@@ -247,3 +247,16 @@ test('AI agent: only the key is needed. The key is verified, a model is chosen, 
   assert.deepEqual(calls, ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant']);
   assert.equal((await serverRef(h.uid).get()).data()!.agent.model, 'llama-3.1-8b-instant');
 });
+
+test('agent: the outcome is saved on the patient message (why it did or did not answer)', async () => {
+  const h = harness();
+  await agentOn(h);
+  await handleWebhook(inbound(h, '923001234567', 'What time is my appointment?', 'wamid.o1'), h.deps);
+  await agentReply(h.uid, 'in_wamid.o1', h.deps, { lastAttempt: true });
+  assert.equal((await col(h.uid, 'messages').doc('in_wamid.o1').get()).data()!.agentOutcome, 'replied');
+
+  await mainRef(h.uid).set({ agentEnabled: false }, { merge: true });
+  await handleWebhook(inbound(h, '923001234567', 'Hello?', 'wamid.o2'), h.deps);
+  await agentReply(h.uid, 'in_wamid.o2', h.deps, { lastAttempt: true });
+  assert.equal((await col(h.uid, 'messages').doc('in_wamid.o2').get()).data()!.agentOutcome, 'disabled');
+});

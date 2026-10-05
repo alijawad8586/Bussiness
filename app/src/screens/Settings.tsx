@@ -74,7 +74,7 @@ export default function Settings({ initialTab = 'source' }: { initialTab?: 'sour
   const [tab, setTab] = useState<'source' | 'agent'>(initialTab);
 
   return (
-    <Shell title="Settings" subtitle="Patient source and AI agent">
+    <Shell title="Settings">
       <View style={{ flexDirection: 'row', gap: 8 }}>
         <Chip label="Patient source" active={tab === 'source'} onPress={() => setTab('source')} />
         <Chip label="AI Agent" active={tab === 'agent'} onPress={() => setTab('agent')} />
@@ -238,7 +238,7 @@ function SourceTab() {
     <View style={{ flexDirection: wide ? 'row' : 'column', gap: 20, alignItems: 'flex-start' }}>
       <View style={{ flex: wide ? 1 : undefined, width: wide ? undefined : '100%', gap: 20 }}>
         <Card style={{ gap: 14 }}>
-          <CardHeading title="Patient data source" sub="Upload a CSV or Excel file with your patients’ phone numbers." />
+          <CardHeading title="Patient data source" />
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flexWrap: 'wrap', backgroundColor: colors.bg, borderRadius: 10, paddingHorizontal: 16, paddingVertical: 14 }}>
             <SheetIcon size={22} />
             <View style={{ flex: 1, minWidth: 160 }}>
@@ -259,7 +259,7 @@ function SourceTab() {
         </Card>
 
         <Card style={{ gap: 16 }}>
-          <CardHeading title="Match your columns" sub="Tell CareReach which column holds each detail." />
+          <CardHeading title="Match your columns" />
           {columns.length ? (
             <>
               {mapRow('Phone number', 'phoneCol', true)}
@@ -280,7 +280,7 @@ function SourceTab() {
         </Card>
 
         <Card style={{ gap: 16 }}>
-          <CardHeading title="Approved message template" sub="Only templates approved by WhatsApp can be sent." />
+          <CardHeading title="Approved message template" />
           {tplOptions.length ? (
             <Select label="Approved message template" height={48} value={tpl ? tplKey(tpl) : ''} options={tplOptions} onChange={chooseTemplate}
               renderValue={(o) => (
@@ -317,7 +317,7 @@ function SourceTab() {
         </Card>
 
         <Card style={{ gap: 18 }}>
-          <CardHeading title="Sending" sub="Messages go out one by one to every number in the sheet." />
+          <CardHeading title="Sending" />
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
             <View style={{ flex: 1, gap: 2 }}>
               <T weight={font.medium}>Send automatically after upload</T>
@@ -391,6 +391,19 @@ function AgentTab() {
     }
   };
 
+  // The switch works at once: no separate Save needed.
+  const toggleAgent = async (v: boolean) => {
+    if (!saved?.hasKey) { showToast('Save an API key first'); return; }
+    setEnabled(v);
+    try {
+      await api.saveAgent({ provider: saved.provider, baseUrl: saved.baseUrl, enabled: v });
+      showToast(v ? 'AI agent is on' : 'AI agent is off');
+    } catch (e) {
+      setEnabled(!v);
+      showToast(e instanceof Error ? e.message : 'Could not change');
+    }
+  };
+
   const test = async () => {
     setBusy('test'); setTestMsg(null);
     try {
@@ -407,7 +420,7 @@ function AgentTab() {
   return (
     <View style={{ flexDirection: wide ? 'row' : 'column', gap: 20, alignItems: 'flex-start' }}>
       <Card style={{ gap: 16, flex: wide ? 1 : undefined, width: wide ? undefined : '100%' }}>
-        <CardHeading title="AI provider" sub="Choose your AI and paste its API key. It is stored only on the server and never shown again." />
+        <CardHeading title="AI provider" />
         <View style={{ gap: 6 }}>
           <T size={12} weight={font.medium} color={colors.muted}>Provider</T>
           <Select label="AI provider" value={provider} options={PROVIDERS.map((p) => ({ value: p.value, label: p.label }))} onChange={(v) => { setProvider(v); setModel(''); setTestMsg(null); }} />
@@ -437,25 +450,15 @@ function AgentTab() {
       </Card>
 
       <Card style={{ gap: 16, width: wide ? 460 : '100%' }}>
-        <CardHeading title="Agent mode" sub="Let the AI answer patient messages automatically." />
+        <CardHeading title="Agent mode" />
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
           <View style={{ flex: 1, gap: 2 }}>
             <T weight={font.medium}>Reply to patients automatically</T>
-            <T size={12} color={colors.muted}>{saved?.hasKey ? 'Applies when you press Save' : 'Save an API key first'}</T>
+            <T size={12} color={colors.muted}>{saved?.hasKey ? (enabled ? 'On' : 'Off') : 'Save an API key first'}</T>
           </View>
-          <Toggle value={enabled} onChange={setEnabled} />
+          <Toggle value={enabled} onChange={toggleAgent} />
         </View>
-        <View style={{ backgroundColor: colors.tint, borderRadius: 10, padding: 14, gap: 6 }}>
-          <T size={13} weight={font.semi} color={colors.dark}>How the agent stays safe</T>
-          {[
-            'Only answers a message the patient just sent.',
-            'Answers appointment and clinic questions. No medical advice.',
-            'Emergency words go to your staff, not to the AI.',
-            'STOP unsubscribes the patient immediately.',
-            'At most 8 automatic replies per patient per hour.',
-            'If the AI fails, the message stays unread for your staff.',
-          ].map((t) => <T key={t} size={12} color={colors.dark}>• {t}</T>)}
-        </View>
+        <T size={12} color={colors.muted}>No medical advice. Emergencies and complaints go to your staff. STOP unsubscribes the patient.</T>
       </Card>
     </View>
   );

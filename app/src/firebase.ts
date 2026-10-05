@@ -1,7 +1,7 @@
 // Web build. See firebase.native.ts for iOS / Android.
 import { initializeApp } from 'firebase/app';
 import { connectAuthEmulator, getAuth } from 'firebase/auth';
-import { connectFirestoreEmulator, initializeFirestore } from 'firebase/firestore';
+import { connectFirestoreEmulator, initializeFirestore, persistentLocalCache, persistentMultipleTabManager } from 'firebase/firestore';
 
 import { firebaseConfig, API_BASE, WEBHOOK_URL } from './firebaseConfig';
 
@@ -9,7 +9,15 @@ export { firebaseConfig, API_BASE, WEBHOOK_URL };
 
 export const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
-export const db = initializeFirestore(app, { experimentalAutoDetectLongPolling: true });
+// Chats are kept on this device too (IndexedDB): they open instantly and stay readable offline.
+function openDb() {
+  try {
+    return initializeFirestore(app, { experimentalAutoDetectLongPolling: true, localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }) });
+  } catch {
+    return initializeFirestore(app, { experimentalAutoDetectLongPolling: true }); // private mode etc.: works without the device cache
+  }
+}
+export const db = openDb();
 
 // `EXPO_PUBLIC_EMULATOR=1 npm run web` talks to the local Firebase emulators instead of the real project.
 if (process.env.EXPO_PUBLIC_EMULATOR === '1') {

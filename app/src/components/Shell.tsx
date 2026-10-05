@@ -5,18 +5,17 @@ import { colors, font } from '../theme';
 import { Route, useStore } from '../store';
 import { CountBadge, Icon, IconName, T, useLayout } from './ui';
 
-type Tab = 'dashboard' | 'inbox' | 'messages' | 'reports' | 'settings';
+type Tab = 'dashboard' | 'inbox' | 'reports' | 'settings';
 
 const NAV: { key: Tab; label: string; short: string; icon: IconName }[] = [
   { key: 'dashboard', label: 'Dashboard', short: 'Home', icon: 'grid' },
   { key: 'inbox', label: 'WhatsApp Inbox', short: 'Inbox', icon: 'message-circle' },
-  { key: 'messages', label: 'Messages', short: 'Messages', icon: 'list' },
   { key: 'reports', label: 'Reports', short: 'Reports', icon: 'bar-chart-2' },
   { key: 'settings', label: 'Settings', short: 'Settings', icon: 'sliders' },
 ];
 
 export function tabOf(r: Route): Tab {
-  return r.name === 'report' ? 'reports' : r.name === 'connect' ? 'settings' : r.name;
+  return r.name === 'report' ? 'reports' : r.name === 'connect' ? 'settings' : r.name === 'messages' ? 'inbox' : r.name;
 }
 
 function Logo({ small }: { small?: boolean }) {
@@ -30,17 +29,6 @@ function Logo({ small }: { small?: boolean }) {
         <T size={17} weight={font.bold}>CareReach</T>
         {!small && <T size={12} color={colors.muted}>Patient messaging</T>}
       </View>
-    </View>
-  );
-}
-
-function ProductChip() {
-  const { server } = useStore();
-  const w = server.whatsapp;
-  return (
-    <View style={s.chip}>
-      <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: w?.connected ? colors.green : '#ef4444' }} />
-      <T size={13} weight={font.medium} color={colors.dark}>{w ? `Product ID: ${w.productId}` : 'WhatsApp not connected'}</T>
     </View>
   );
 }
@@ -66,9 +54,9 @@ function Sidebar() {
       <View style={s.apiBox}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
           <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: w?.connected ? colors.green : '#ef4444' }} />
-          <T size={13} weight={font.medium}>{w?.connected ? 'WhatsApp API connected' : 'WhatsApp not connected'}</T>
+          <T size={13} weight={font.medium}>{w?.connected ? 'WhatsApp connected' : 'WhatsApp not connected'}</T>
         </View>
-        <T size={12} color={colors.muted}>{w ? `Product ID · ${w.productId}` : 'Connect in Settings'}</T>
+        {w?.connected ? <T size={12} color={colors.muted}>{w.displayNumber}</T> : <T size={12} color={colors.muted}>Connect in Settings</T>}
       </View>
       <View style={[s.apiBox, { flexDirection: 'row', alignItems: 'center', gap: 8 }]}>
         <View style={{ flex: 1 }}>
@@ -135,11 +123,9 @@ export function Shell({
   const header = (
     <View style={[s.top, !wide && { marginBottom: 4 }]}>
       <View style={{ flex: 1, gap: 4 }}>
-        <T size={wide ? 26 : 22} weight={font.bold} numberOfLines={2}>{title}</T>
-        {subtitle ? <T size={14} color={colors.muted}>{subtitle}</T> : null}
+        <T size={wide ? 24 : 20} weight={font.bold} numberOfLines={2}>{title}</T>
+        {subtitle ? <T size={13} color={colors.muted}>{subtitle}</T> : null}
       </View>
-      {wide ? <ProductChip /> : null}
-      <View style={s.avatar}><T size={14} weight={font.semi} color="#fff">CA</T></View>
     </View>
   );
   const body = (

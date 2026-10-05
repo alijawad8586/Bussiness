@@ -8,6 +8,7 @@ export function messageOf(id: string, d: DocumentData): Message {
   return {
     id, contactId: d.contactId, phone: d.phone ?? '', patient: d.patient ?? '', doctor: d.doctor ?? '', direction: d.direction, kind: d.kind, by: d.by,
     template: d.template ?? null, text: d.text ?? '', status: d.status, error: d.error ?? null, createdAt: ms(d.createdAt) ?? 0, outAt: ms(d.outAt),
+    agentOutcome: d.agentOutcome, agentError: d.agentError,
   };
 }
 

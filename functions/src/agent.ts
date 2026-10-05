@@ -15,6 +15,13 @@ export type AgentOutcome = 'replied' | 'disabled' | 'skipped' | 'handoff' | 'opt
  * stops on STOP, hands emergencies to staff, and is capped per patient per hour.
  */
 export async function agentReply(uid: string, inboundId: string, deps: Deps, opts: { lastAttempt: boolean }): Promise<AgentOutcome> {
+  const outcome = await run(uid, inboundId, deps, opts);
+  // Saved on the patient's message so staff can see why the AI did (not) answer. A retry (RetryLater) skips this.
+  await col(uid, 'messages').doc(inboundId).update({ agentOutcome: outcome }).catch(() => {});
+  return outcome;
+}
+
+async function run(uid: string, inboundId: string, deps: Deps, opts: { lastAttempt: boolean }): Promise<AgentOutcome> {
   const inRef = col(uid, 'messages').doc(inboundId);
   const inSnap = await inRef.get();
   if (!inSnap.exists) return 'skipped';

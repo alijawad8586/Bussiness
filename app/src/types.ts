@@ -56,6 +56,9 @@ export interface Message {
   error: { code: number; message: string; hint: string } | null;
   createdAt: number;
   outAt: number | null;
+  /** what the AI agent did with this patient message */
+  agentOutcome?: string;
+  agentError?: string;
 }
 
 export interface Campaign {
