@@ -1,5 +1,5 @@
 import { FieldValue } from 'firebase-admin/firestore';
-import { AI_PROVIDERS, assertSafeBaseUrl, AiError } from './aiClient.js';
+import { AI_PROVIDERS, assertSafeBaseUrl, AiError, pickModel } from './aiClient.js';
 import { classifyWaError } from './waErrors.js';
 import { db, loadSecrets, loadServer, mainRef, phoneIndexRef, requireWhatsApp, secretsRef, serverRef, type Deps } from './repo.js';
 import { AppError, type ContactDoc } from './types.js';
@@ -70,10 +70,9 @@ export async function listTemplates(uid: string, deps: Deps) {
   return { templates: r.templates };
 }
 
-export async function saveAgent(uid: string, input: { provider: string; apiKey?: string; model?: string; baseUrl?: string; enabled: boolean }) {
+export async function saveAgent(uid: string, input: { provider: string; apiKey?: string; model?: string; baseUrl?: string; enabled: boolean }, deps: Deps) {
   const info = AI_PROVIDERS.find((p) => p.id === input.provider);
   if (!info) throw new AppError('invalid-argument', 'Choose an AI provider.');
-  const model = str(input.model, 100) || info.model;
   let baseUrl: string | undefined;
   if (info.id === 'custom') {
     try {
@@ -81,28 +80,57 @@ export async function saveAgent(uid: string, input: { provider: string; apiKey?:
     } catch (e) {
       throw new AppError('invalid-argument', e instanceof AiError ? e.message : 'Invalid API address.');
     }
-    if (!model) throw new AppError('invalid-argument', 'Enter the model name.');
   }
   const newKey = str(input.apiKey, 500);
   const secrets = await loadSecrets(uid);
-  if (!newKey && !secrets.aiKey) throw new AppError('invalid-argument', 'Paste your API key.');
-  if (newKey) await secretsRef(uid).set({ aiKey: newKey }, { merge: true });
+  const key = newKey || secrets.aiKey;
+  if (!key) throw new AppError('invalid-argument', 'Paste your API key.');
 
+  // 1. Check the key. No model name needed: the provider just lists what this key can use.
+  let available: string[] | null = null;
+  if (deps.aiModels) {
+    try {
+      available = await deps.aiModels({ provider: info.id, baseUrl, key });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Request failed';
+      if (/^(401|403)/.test(msg)) throw new AppError('invalid-argument', `${info.name} rejected this API key. Copy it again from the provider's website.`);
+      if (info.id !== 'custom') throw new AppError('unavailable', `Could not check the key with ${info.name}: ${msg}`);
+      // some "other" providers have no model list: then the model name must be typed
+    }
+  }
+
+  // 2. Choose the model: the typed one if it works for this key, otherwise automatically.
+  let model = str(input.model, 100);
+  if (model && available && available.length && !available.includes(model)) {
+    throw new AppError('invalid-argument', `The model "${model}" is not available for this key. Leave the model empty and one is chosen for you.`);
+  }
+  if (!model) model = (available && pickModel(info.id, available)) || (info.id === 'custom' ? '' : info.model);
+  if (!model) throw new AppError('invalid-argument', 'This provider did not list any model. Type the model name.');
+
+  if (newKey) await secretsRef(uid).set({ aiKey: newKey }, { merge: true });
   await serverRef(uid).set({ agent: { provider: info.id, model, ...(baseUrl ? { baseUrl } : {}), hasKey: true, lastError: null } }, { merge: true });
   await mainRef(uid).set({ agentEnabled: !!input.enabled }, { merge: true });
-  return { ok: true };
+  return { ok: true, model, verified: !!available };
 }
 
-/** Sends one tiny request to the AI so the user knows the key works. */
+/** Sends one tiny request to the AI so the user knows the key works. If the saved model is gone, a working one is chosen. */
 export async function testAgent(uid: string, deps: Deps) {
   const [server, secrets] = await Promise.all([loadServer(uid), loadSecrets(uid)]);
   if (!server.agent?.hasKey || !secrets.aiKey) throw new AppError('failed-precondition', 'Save an API key first.');
+  const cfg = { provider: server.agent.provider, model: server.agent.model, baseUrl: server.agent.baseUrl, key: secrets.aiKey };
+  const ask = (model: string) => deps.ai({ ...cfg, model }, 'You are a connection test.', [{ role: 'user', text: 'Reply with the single word OK.' }]);
   try {
-    const reply = await deps.ai(
-      { provider: server.agent.provider, model: server.agent.model, baseUrl: server.agent.baseUrl, key: secrets.aiKey },
-      'You are a connection test.',
-      [{ role: 'user', text: 'Reply with the single word OK.' }],
-    );
+    let reply: string;
+    try {
+      reply = await ask(cfg.model);
+    } catch (e) {
+      // the model was retired or is not open to this key: find another one and remember it
+      if (!(e instanceof Error) || !/^(400|404)/.test(e.message) || !deps.aiModels) throw e;
+      const picked = pickModel(cfg.provider, await deps.aiModels(cfg));
+      if (!picked || picked === cfg.model) throw e;
+      reply = await ask(picked);
+      await serverRef(uid).set({ agent: { model: picked } }, { merge: true });
+    }
     return { ok: true, reply: reply.slice(0, 100) };
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'Request failed';

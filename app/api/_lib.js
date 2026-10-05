@@ -4,7 +4,7 @@ const { waitUntil } = require('@vercel/functions');
 const { ensureAdmin, workerSecret, NOT_CONFIGURED } = require('./_core/admin.js');
 const { AppError } = require('./_core/types.js');
 const { realWa } = require('./_core/whatsapp.js');
-const { generate } = require('./_core/aiClient.js');
+const { generate, listModels } = require('./_core/aiClient.js');
 const { agentReply } = require('./_core/agent.js');
 const { RetryLater } = require('./_core/messaging.js');
 
@@ -54,6 +54,7 @@ function makeDeps(origin) {
   const deps = {
     wa: realWa,
     ai: generate,
+    aiModels: listModels,
     now: () => new Date(),
     enqueue: {
       send: async () => {}, // sending is done by /api/worker, not by one task per message

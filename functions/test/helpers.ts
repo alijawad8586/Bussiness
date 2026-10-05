@@ -48,6 +48,8 @@ export interface Harness {
   agentJobs: { uid: string; messageId: string }[];
   aiCalls: { system: string; history: { role: string; text: string }[] }[];
   aiResult: () => string | Error;
+  /** models the fake provider says the key can use */
+  models: string[];
   clock: { t: number };
 }
 
@@ -57,6 +59,7 @@ export function harness(): Harness {
     wa: new FakeWa(),
     sent: [], agentJobs: [], aiCalls: [], clock: { t: Date.parse('2026-10-05T09:00:00Z') },
     aiResult: () => 'Your appointment is confirmed.',
+    models: ['gemini-2.5-flash', 'gpt-4o-mini', 'text-embedding-3-small'],
     deps: null as unknown as Deps,
   };
   h.deps = {
@@ -67,6 +70,10 @@ export function harness(): Harness {
       const r = h.aiResult();
       if (r instanceof Error) throw r;
       return r;
+    },
+    aiModels: async (cfg) => {
+      if (cfg.key.startsWith('bad')) throw new AiError('401: invalid key', false);
+      return h.models;
     },
     enqueue: {
       send: async (uid, messageId, delay) => { h.sent.push({ uid, messageId, delay }); },

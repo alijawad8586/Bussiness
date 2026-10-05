@@ -361,25 +361,31 @@ function AgentTab() {
   const saved = server.agent;
   const [provider, setProvider] = useState(saved?.provider ?? 'gemini');
   const [key, setKey] = useState('');
-  const [model, setModel] = useState(saved?.model ?? '');
+  const [model, setModel] = useState(''); // optional: empty = chosen automatically
   const [baseUrl, setBaseUrl] = useState(saved?.baseUrl ?? '');
   const [enabled, setEnabled] = useState(main.agentEnabled);
   const [busy, setBusy] = useState<'save' | 'test' | null>(null);
   const [testMsg, setTestMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
-  useEffect(() => { if (saved) { setProvider(saved.provider); setModel(saved.model); setBaseUrl(saved.baseUrl ?? ''); } }, [saved?.provider, saved?.model, saved?.baseUrl]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (saved) { setProvider(saved.provider); setBaseUrl(saved.baseUrl ?? ''); } }, [saved?.provider, saved?.baseUrl]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => setEnabled(main.agentEnabled), [main.agentEnabled]);
 
   const info = PROVIDERS.find((p) => p.value === provider)!;
 
   const save = async () => {
+    if (!key.trim() && (!saved?.hasKey || saved.provider !== provider)) {
+      setTestMsg({ ok: false, text: `Paste your ${info.label} API key.` });
+      return false;
+    }
     setBusy('save'); setTestMsg(null);
     try {
-      await api.saveAgent({ provider, apiKey: key.trim() || undefined, model: model.trim() || undefined, baseUrl: provider === 'custom' ? baseUrl.trim() : undefined, enabled });
-      setKey('');
-      showToast(enabled ? 'AI agent is on' : 'AI settings saved');
+      const r = await api.saveAgent({ provider, apiKey: key.trim() || undefined, model: model.trim() || undefined, baseUrl: provider === 'custom' ? baseUrl.trim() : undefined, enabled });
+      setKey(''); setModel('');
+      setTestMsg({ ok: true, text: `${r.verified ? 'API key verified. ' : ''}Using model: ${r.model}${enabled ? '. The AI agent is on.' : '.'}` });
+      return true;
     } catch (e) {
       setTestMsg({ ok: false, text: e instanceof Error ? e.message : 'Could not save' });
+      return false;
     } finally {
       setBusy(null);
     }
@@ -388,7 +394,7 @@ function AgentTab() {
   const test = async () => {
     setBusy('test'); setTestMsg(null);
     try {
-      if (key.trim()) await save();
+      if (key.trim() && !(await save())) return;
       const r = await api.testAgent();
       setTestMsg({ ok: true, text: `Connected. The AI answered: “${r.reply}”` });
     } catch (e) {
@@ -404,7 +410,7 @@ function AgentTab() {
         <CardHeading title="AI provider" sub="Choose your AI and paste its API key. It is stored only on the server and never shown again." />
         <View style={{ gap: 6 }}>
           <T size={12} weight={font.medium} color={colors.muted}>Provider</T>
-          <Select label="AI provider" value={provider} options={PROVIDERS.map((p) => ({ value: p.value, label: p.label }))} onChange={(v) => { setProvider(v); setModel(PROVIDERS.find((p) => p.value === v)?.model ?? ''); }} />
+          <Select label="AI provider" value={provider} options={PROVIDERS.map((p) => ({ value: p.value, label: p.label }))} onChange={(v) => { setProvider(v); setModel(''); setTestMsg(null); }} />
         </View>
         <View style={{ gap: 6 }}>
           <T size={12} weight={font.medium} color={colors.muted}>API key</T>
@@ -418,8 +424,9 @@ function AgentTab() {
           </View>
         ) : null}
         <View style={{ gap: 6 }}>
-          <T size={12} weight={font.medium} color={colors.muted}>Model</T>
-          <Input value={model} onChangeText={setModel} autoCapitalize="none" autoCorrect={false} accessibilityLabel="AI model" placeholder={info.model || 'Model name'} />
+          <T size={12} weight={font.medium} color={colors.muted}>Model (optional)</T>
+          <Input value={model} onChangeText={setModel} autoCapitalize="none" autoCorrect={false} accessibilityLabel="AI model" placeholder={provider === 'custom' ? 'Model name (needed only if the provider has no model list)' : 'Leave empty: chosen automatically'} />
+          {saved?.model && saved.provider === provider ? <T size={12} color={colors.muted}>Now using: {saved.model}</T> : null}
         </View>
         {testMsg ? <T size={13} color={testMsg.ok ? '#15803d' : colors.danger}>{testMsg.text}</T> : null}
         {saved?.lastError && !testMsg ? <T size={12} color={colors.danger}>Last AI error: {saved.lastError}</T> : null}

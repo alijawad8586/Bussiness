@@ -99,3 +99,57 @@ export async function generate(cfg: AiConfig, system: string, history: HistoryIt
   if (!text.trim()) throw new AiError('The AI returned an empty answer.', false);
   return text;
 }
+
+async function get(url: string, headers: Record<string, string>): Promise<any> {
+  let res: Response;
+  try {
+    res = await fetch(url, { headers, signal: AbortSignal.timeout(20_000) });
+  } catch (e) {
+    throw new AiError(e instanceof Error ? e.message : 'Network error', true);
+  }
+  const json: any = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const msg = String(json?.error?.message ?? json?.message ?? res.statusText);
+    throw new AiError(`${res.status}: ${msg}`, res.status === 429 || res.status >= 500);
+  }
+  return json;
+}
+
+/**
+ * Asks the provider which models this key may use. It doubles as the key check: a wrong key
+ * is rejected here (401/403), and no model name is needed for it.
+ */
+export async function listModels(cfg: Pick<AiConfig, 'provider' | 'baseUrl' | 'key'>): Promise<string[]> {
+  const { info, url } = endpoint({ ...cfg, model: '' });
+  if (info.kind === 'gemini') {
+    const j = await get(`${url}/models?pageSize=200`, { 'x-goog-api-key': cfg.key });
+    return (j.models ?? [])
+      .filter((m: any) => (m.supportedGenerationMethods ?? []).includes('generateContent'))
+      .map((m: any) => String(m.name ?? '').replace(/^models\//, ''))
+      .filter(Boolean);
+  }
+  if (info.kind === 'anthropic') {
+    const j = await get(`${url}/models?limit=100`, { 'x-api-key': cfg.key, 'anthropic-version': '2023-06-01' });
+    return (j.data ?? []).map((m: any) => String(m.id ?? '')).filter(Boolean);
+  }
+  const j = await get(`${url}/models`, { Authorization: `Bearer ${cfg.key}` });
+  return (j.data ?? []).map((m: any) => String(m.id ?? '')).filter(Boolean);
+}
+
+const NOT_CHAT = /embed|whisper|tts|speech|audio|transcri|moderation|guard|image|dall|vision-preview|rerank|imagen|veo|aqa|robotics|live|realtime|search|computer-use|instruct-\d|davinci|babbage|ada\b|omni-moderation/i;
+
+/** Picks a good, cheap chat model from what the key can use. */
+export function pickModel(providerId: string, available: string[]): string | null {
+  const chat = available.filter((m) => !NOT_CHAT.test(m));
+  const prefer: Record<string, RegExp[]> = {
+    gemini: [/^gemini-2\.5-flash$/, /^gemini-2\.0-flash$/, /^gemini-.*flash(?!-lite)(?!.*(preview|exp|thinking))/, /^gemini-.*flash/, /^gemini-/],
+    openai: [/^gpt-4o-mini$/, /^gpt-4\.1-mini$/, /^gpt-5.*mini$/, /^gpt-4o$/, /^gpt-/],
+    anthropic: [/haiku/, /sonnet/, /^claude-/],
+    groq: [/^llama-3\.3-70b-versatile$/, /^llama-3\.1-8b-instant$/, /llama/, /^(gemma|mixtral|qwen)/],
+  };
+  for (const re of prefer[providerId] ?? []) {
+    const hit = chat.filter((m) => re.test(m)).sort()[0];
+    if (hit) return hit;
+  }
+  return chat.sort()[0] ?? null;
+}

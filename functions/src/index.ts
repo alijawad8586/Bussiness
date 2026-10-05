@@ -4,7 +4,7 @@ import { setGlobalOptions } from 'firebase-functions/v2';
 import { onCall, onRequest, HttpsError, type CallableRequest } from 'firebase-functions/v2/https';
 import { onTaskDispatched } from 'firebase-functions/v2/tasks';
 import { defineString } from 'firebase-functions/params';
-import { generate } from './aiClient.js';
+import { generate, listModels } from './aiClient.js';
 import { agentReply } from './agent.js';
 import { campaignAction, createCampaign, MAX_ATTEMPTS, performSend, RetryLater, sendManual, sendTemplateToContact } from './messaging.js';
 import { loadMain, type Deps } from './repo.js';
@@ -25,6 +25,7 @@ const appSecret = defineString('WA_APP_SECRET', { default: '' });
 const deps: Deps = {
   wa: realWa,
   ai: generate,
+  aiModels: listModels,
   now: () => new Date(),
   enqueue: {
     send: (uid, messageId, delaySeconds) =>
@@ -51,7 +52,7 @@ function api<T, R>(fn: (uid: string, data: T) => Promise<R>, heavy = false) {
 export const health = onCall({ cors: true }, () => ({ ok: true, region: REGION, time: new Date().toISOString() }));
 export const connectWhatsAppFn = api<any, unknown>((uid, d) => connectWhatsApp(uid, d, deps));
 export const listTemplatesFn = api<any, unknown>((uid) => listTemplates(uid, deps));
-export const saveAgentFn = api<any, unknown>((uid, d) => saveAgent(uid, d));
+export const saveAgentFn = api<any, unknown>((uid, d) => saveAgent(uid, d, deps));
 export const testAgentFn = api<any, unknown>((uid) => testAgent(uid, deps));
 export const campaignActionFn = api<any, unknown>((uid, d) => campaignAction(uid, d, deps), true);
 export const sendManualFn = api<any, unknown>((uid, d) => sendManual(uid, d, deps));

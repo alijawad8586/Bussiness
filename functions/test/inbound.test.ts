@@ -178,17 +178,17 @@ test('connecting WhatsApp verifies the token, hides it, and blocks stealing a nu
 
 test('saving the agent: key required, custom URL checked, test call works', async () => {
   const h = harness();
-  await assert.rejects(saveAgent(h.uid, { provider: 'gemini', enabled: true }), /API key/);
-  await assert.rejects(saveAgent(h.uid, { provider: 'nope', apiKey: 'k', enabled: true }), /provider/);
-  await assert.rejects(saveAgent(h.uid, { provider: 'custom', apiKey: 'k', baseUrl: 'http://evil.com', model: 'm', enabled: true }), /https/);
-  await saveAgent(h.uid, { provider: 'gemini', apiKey: 'AIza-test', enabled: true });
+  await assert.rejects(saveAgent(h.uid, { provider: 'gemini', enabled: true }, h.deps), /API key/);
+  await assert.rejects(saveAgent(h.uid, { provider: 'nope', apiKey: 'k', enabled: true }, h.deps), /provider/);
+  await assert.rejects(saveAgent(h.uid, { provider: 'custom', apiKey: 'k', baseUrl: 'http://evil.com', model: 'm', enabled: true }, h.deps), /https/);
+  await saveAgent(h.uid, { provider: 'gemini', apiKey: 'AIza-test', enabled: true }, h.deps);
   let srv = (await serverRef(h.uid).get()).data()!;
   assert.equal(srv.agent.provider, 'gemini');
   assert.equal(srv.agent.model, 'gemini-2.5-flash');
   assert.equal(JSON.stringify(srv).includes('AIza'), false);
   assert.equal((await mainRef(h.uid).get()).data()!.agentEnabled, true);
   // changing provider without pasting the key again keeps the saved key
-  await saveAgent(h.uid, { provider: 'openai', enabled: false });
+  await saveAgent(h.uid, { provider: 'openai', enabled: false }, h.deps);
   assert.equal((await secretsRef(h.uid).get()).data()!.aiKey, 'AIza-test');
   assert.equal((await testAgent(h.uid, h.deps)).ok, true);
   h.aiResult = () => new AiError('401: invalid key', false);
@@ -218,4 +218,32 @@ test('webhook remembers when WhatsApp last called, and connecting subscribes the
   const w = (await serverRef(h.uid).get()).data()!.webhook;
   assert.equal(w.inbound, 1);
   assert.ok(w.lastAt);
+});
+
+test('AI agent: only the key is needed. The key is verified, a model is chosen, and a retired model is replaced', async () => {
+  const h = harness();
+  await seedUser(h);
+  await assert.rejects(saveAgent(h.uid, { provider: 'groq', apiKey: 'bad-key', enabled: true }, h.deps), /rejected this API key/);
+  assert.equal((await secretsRef(h.uid).get()).data()?.aiKey, undefined, 'a rejected key is not saved');
+
+  h.models = ['llama-3.1-8b-instant', 'whisper-large-v3', 'llama-guard-4-12b', 'qwen3-32b'];
+  const r = await saveAgent(h.uid, { provider: 'groq', apiKey: 'gsk-good', enabled: true }, h.deps);
+  assert.equal(r.model, 'llama-3.1-8b-instant');
+  assert.equal(r.verified, true);
+  assert.equal((await serverRef(h.uid).get()).data()!.agent.model, 'llama-3.1-8b-instant');
+
+  await assert.rejects(saveAgent(h.uid, { provider: 'groq', model: 'does-not-exist', enabled: true }, h.deps), /not available for this key/);
+
+  // the saved model is retired later: the connection test finds another one by itself
+  await serverRef(h.uid).set({ agent: { model: 'llama-3.3-70b-versatile' } }, { merge: true });
+  const calls: string[] = [];
+  h.deps.ai = async (cfg) => {
+    calls.push(cfg.model);
+    if (cfg.model === 'llama-3.3-70b-versatile') throw new AiError('404: The model does not exist', false);
+    return 'OK';
+  };
+  const t = await testAgent(h.uid, h.deps);
+  assert.equal(t.ok, true);
+  assert.deepEqual(calls, ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant']);
+  assert.equal((await serverRef(h.uid).get()).data()!.agent.model, 'llama-3.1-8b-instant');
 });

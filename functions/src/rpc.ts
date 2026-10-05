@@ -25,7 +25,7 @@ export async function handleRpc(fn: string, uid: string, data: any, deps: Deps):
   switch (fn) {
     case 'connectWhatsApp': return connectWhatsApp(uid, data, deps);
     case 'listTemplates': return listTemplates(uid, deps);
-    case 'saveAgent': return saveAgent(uid, data);
+    case 'saveAgent': return saveAgent(uid, data, deps);
     case 'testAgent': return testAgent(uid, deps);
     case 'importSheet': return importAndSend(uid, data, deps);
     case 'startCampaign':

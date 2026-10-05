@@ -1,12 +1,14 @@
 import { getFirestore, type CollectionReference, type DocumentReference } from 'firebase-admin/firestore';
 import { AppError, type MainSettings, type Secrets, type ServerSettings } from './types.js';
 import type { WaApi } from './whatsapp.js';
-import type { generate } from './aiClient.js';
+import type { generate, listModels } from './aiClient.js';
 
 /** Everything the logic needs from the outside world. Tests pass fakes. */
 export interface Deps {
   wa: WaApi;
   ai: typeof generate;
+  /** which models an API key can use (also proves the key works) */
+  aiModels?: typeof listModels;
   enqueue: {
     send(uid: string, messageId: string, delaySeconds: number): Promise<void>;
     agent(uid: string, messageId: string): Promise<void>;

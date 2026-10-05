@@ -42,7 +42,7 @@ export const api = {
   connectWhatsApp: (d: { productId: string; wabaId: string; phoneNumberId: string; token: string }) =>
     call<typeof d, { displayNumber: string; verifiedName: string }>('connectWhatsApp', d),
   listTemplates: () => call<void, { templates: TemplateRef[] }>('listTemplates'),
-  saveAgent: (d: { provider: string; apiKey?: string; model?: string; baseUrl?: string; enabled: boolean }) => call<typeof d, { ok: boolean }>('saveAgent', d),
+  saveAgent: (d: { provider: string; apiKey?: string; model?: string; baseUrl?: string; enabled: boolean }) => call<typeof d, { ok: boolean; model: string; verified: boolean }>('saveAgent', d),
   testAgent: () => call<void, { ok: boolean; reply: string }>('testAgent'),
   importSheet: (d: { fileName: string; rows: string[][] }) => call<typeof d, ImportResult>('importSheet', d),
   startCampaign: (d: { sheetId: string }) => call<typeof d, { campaignId: string; total: number }>('startCampaign', d),
