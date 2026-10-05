@@ -8,5 +8,9 @@ export const firebaseConfig = {
   appId: '1:178736204875:web:ba852e942395bb9ed391ce',
 };
 
-export const FUNCTIONS_REGION = 'us-central1';
-export const WEBHOOK_URL = `https://${FUNCTIONS_REGION}-${firebaseConfig.projectId}.cloudfunctions.net/whatsappWebhook`;
+// The backend is the /api folder of the same Vercel site. The web app calls it on its own address;
+// the phone apps need the full address (set EXPO_PUBLIC_API_BASE to use another one).
+const web = typeof document !== 'undefined';
+const DEFAULT_SITE = 'https://carereach-gamma.vercel.app';
+export const API_BASE = (process.env.EXPO_PUBLIC_API_BASE ?? (web ? '' : DEFAULT_SITE)).replace(/\/$/, '');
+export const WEBHOOK_URL = `${API_BASE || (web ? window.location.origin : DEFAULT_SITE)}/api/whatsapp`;

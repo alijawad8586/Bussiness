@@ -15,18 +15,23 @@
     "react-native-safe-area-context": "~5.7.0",
     "react-native-svg": "^15.15.4",
     "react-native-web": "^0.21.3",
-    "xlsx": "^0.18.5"
+    "xlsx": "^0.18.5",
+    "firebase-admin": "^14.5.0",
+    "@vercel/functions": "^3.0.0"
   },
   "devDependencies": {
     "@types/react": "~19.2.2",
-    "typescript": "~6.0.3"
+    "typescript": "~6.0.3",
+    "@types/node": "^22.0.0"
   },
   "scripts": {
     "start": "expo start",
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build:api": "node scripts/build-api.js",
+    "build:vercel": "npm run build:api && expo export --platform web"
   },
   "private": true
 }

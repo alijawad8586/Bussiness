@@ -101,6 +101,8 @@ export interface MessageDoc {
   attempts: number;
   /** a worker holds this message until then, so two workers never send it twice */
   lockedUntil: Timestamp | null;
+  /** do not try again before this time (back-off after a temporary WhatsApp problem) */
+  notBefore?: Timestamp | null;
   /** set only on outbound messages, so `orderBy(outAt)` lists exactly the outbound ones */
   outAt: Timestamp | null;
   bucket: string | null;

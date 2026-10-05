@@ -12,6 +12,8 @@ export interface Deps {
     agent(uid: string, messageId: string): Promise<void>;
   };
   now(): Date;
+  /** Called when messages were queued for a campaign. Hosts without a task queue use it to start a worker. */
+  kick?(uid: string, campaignId: string): Promise<void>;
 }
 
 export const db = () => getFirestore();

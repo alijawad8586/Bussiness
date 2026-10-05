@@ -223,6 +223,7 @@ export async function createCampaign(uid: string, input: { sheetId: string }, de
   }
   try {
     await enqueueAll(uid, msgs.map((m) => m.id), main.speed, deps);
+    await deps.kick?.(uid, cRef.id);
   } catch (e) {
     await cRef.update({ status: 'paused', error: 'Could not start the sending queue. Press Resume to try again.' });
     throw new AppError('unavailable', 'Messages are saved but the sending queue could not start. Open the report and press Resume.');
@@ -292,7 +293,7 @@ export async function campaignAction(uid: string, input: { campaignId: string; a
     const failed = (await col(uid, 'messages').where('campaignId', '==', input.campaignId).where('status', '==', 'failed').get()).docs;
     for (let i = 0; i < failed.length; i += 400) {
       const b = db().batch();
-      failed.slice(i, i + 400).forEach((d) => b.update(d.ref, { status: 'queued', error: null, attempts: 0, lockedUntil: null, bucket: null, updatedAt: Timestamp.fromDate(deps.now()) }));
+      failed.slice(i, i + 400).forEach((d) => b.update(d.ref, { status: 'queued', error: null, attempts: 0, lockedUntil: null, notBefore: null, bucket: null, updatedAt: Timestamp.fromDate(deps.now()) }));
       await b.commit();
     }
     await recountCampaign(uid, input.campaignId);
@@ -301,6 +302,7 @@ export async function campaignAction(uid: string, input: { campaignId: string; a
   const queued = await col(uid, 'messages').where('campaignId', '==', input.campaignId).where('status', '==', 'queued').get();
   await cRef.update({ status: queued.size ? 'running' : 'completed', error: null });
   await enqueueAll(uid, queued.docs.map((d) => d.id), speed, deps);
+  if (queued.size) await deps.kick?.(uid, input.campaignId);
   return { count: queued.size };
 }
 

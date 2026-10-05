@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Pressable, View } from 'react-native';
 import { getDocs, limit, orderBy, query, startAfter, where, type QueryDocumentSnapshot } from 'firebase/firestore';
 import { colors, font, statusColors } from '../theme';
@@ -32,6 +32,16 @@ export default function ReportDetail({ id }: { id: string }) {
   const { wide } = useLayout();
   const [busy, setBusy] = useState(false);
   const c = campaigns.find((x) => x.id === id);
+  const active = c?.status === 'running' || c?.status === 'queued';
+
+  // While this report is open and messages are waiting, nudge the server every 20 s so sending never stalls.
+  useEffect(() => {
+    if (!active) return;
+    const ping = () => { api.kick({ campaignId: id }).catch(() => {}); };
+    ping();
+    const t = setInterval(ping, 20_000);
+    return () => clearInterval(t);
+  }, [active, id]);
 
   if (!c) {
     return (
