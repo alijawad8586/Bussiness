@@ -9,8 +9,16 @@ function readServiceAccount(): { project_id: string; client_email: string; priva
   if (!raw) return null;
   // accepts the JSON file as is, or the same JSON encoded as base64
   const text = raw.startsWith('{') ? raw : Buffer.from(raw, 'base64').toString('utf8');
-  const sa = JSON.parse(text);
-  if (!sa.project_id || !sa.client_email || !sa.private_key) throw new Error('FIREBASE_SERVICE_ACCOUNT is missing project_id, client_email or private_key');
+  let sa: any;
+  try {
+    sa = JSON.parse(text);
+  } catch {
+    throw new AppError('failed-precondition', 'FIREBASE_SERVICE_ACCOUNT in Vercel is not valid JSON. Paste the whole downloaded .json file text, from { to }.');
+  }
+  if (!sa.project_id || !sa.client_email || !sa.private_key) {
+    throw new AppError('failed-precondition', 'FIREBASE_SERVICE_ACCOUNT is missing project_id, client_email or private_key. Use the key file from Firebase > Service accounts.');
+  }
+  sa.private_key = String(sa.private_key).replace(/\\n/g, '\n');
   return sa;
 }
 

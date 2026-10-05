@@ -108,7 +108,9 @@ function fail(res, e) {
     return json(res, code, { error: { code: e.code, message: e.message } });
   }
   console.error('api failed', e);
-  return json(res, 500, { error: { code: 'internal', message: 'Something went wrong on our side. Please try again.' } });
+  // a short technical hint (no secrets) so a failure can be diagnosed from the screen
+  const detail = `${(e && (e.code || e.name)) || 'Error'}: ${String((e && e.message) || e).replace(/\s+/g, ' ').slice(0, 160)}`;
+  return json(res, 500, { error: { code: 'internal', message: 'Something went wrong on our side. Please try again.', detail } });
 }
 
 /** Returns the signed-in user's id from the "Authorization: Bearer <Firebase ID token>" header. */

@@ -30,7 +30,8 @@ async function call<I, O>(fn: string, data?: I): Promise<O> {
   }
   if (res.status === 401) throw new Error('Your session expired. Please log in again.');
   if (res.status === 404 && !msg) throw new Error('The server API was not found. Please redeploy the app.');
-  throw new Error(msg || 'Something went wrong on our side. Please try again.');
+  const detail: string = body?.error?.detail ?? '';
+  throw new Error((msg || 'Something went wrong on our side. Please try again.') + (detail ? ` (${detail})` : ''));
 }
 
 export const api = {
