@@ -6,12 +6,19 @@ import { ImportResult, TemplateRef } from './types';
 export function friendlyError(e: unknown): string {
   const err = e as { code?: string; message?: string };
   const code = err?.code ?? '';
-  if (code === 'functions/not-found' || code === 'functions/unavailable' || /NOT_FOUND|Failed to fetch|network/i.test(err?.message ?? '')) {
-    return 'Cannot reach the backend. If this is the first run, deploy it once with: firebase deploy';
+  const msg = err?.message ?? '';
+  // "internal", "internal [0]" and similar come from the browser, not from our server: the request never reached it.
+  // This happens when the backend functions are not deployed yet.
+  const unreachable =
+    code === 'functions/not-found' || code === 'functions/unavailable' ||
+    /NOT_FOUND|Failed to fetch|network/i.test(msg) ||
+    (code === 'functions/internal' && /^internal(\s*\[\d+\])?$/i.test(msg.trim()));
+  if (unreachable) {
+    return 'Cannot reach the backend. The backend functions are not deployed yet. Deploy them once with: ./deploy.sh (see README), then try again.';
   }
   if (code === 'functions/unauthenticated') return 'Your session expired. Please log in again.';
-  if (code === 'functions/internal') return err?.message && err.message !== 'internal' ? err.message : 'Something went wrong on our side. Please try again.';
-  return err?.message || 'Something went wrong. Please try again.';
+  if (code === 'functions/internal') return msg || 'Something went wrong on our side. Please try again.';
+  return msg || 'Something went wrong. Please try again.';
 }
 
 async function call<I, O>(name: string, data?: I): Promise<O> {
