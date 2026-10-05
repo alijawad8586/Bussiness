@@ -137,6 +137,8 @@ export default function Inbox({ openId }: { openId?: string }) {
     }]);
     return id;
   };
+  // WhatsApp refused it: the server saved a red "failed" message, so the temporary one is simply removed
+  const dropPending = (id: string) => setPending((p) => p.filter((m) => m.id !== id));
   const failPending = (id: string, hint: string) =>
     setPending((p) => p.map((m) => (m.id === id ? { ...m, status: 'failed', error: { code: 0, message: hint, hint } } : m)));
 
@@ -147,7 +149,7 @@ export default function Inbox({ openId }: { openId?: string }) {
     const id = addPending(current, 'text', text, null);
     try {
       const r = await api.sendManual({ contactId: current.id, text });
-      if (r.status === 'failed') failPending(id, 'WhatsApp could not send this message.');
+      if (r.status === 'failed') dropPending(id);
     } catch (e) {
       failPending(id, e instanceof Error ? e.message : 'Could not send');
     }
@@ -159,7 +161,7 @@ export default function Inbox({ openId }: { openId?: string }) {
     const id = addPending(current, 'template', renderBody(main.template.body, main.varCols.map((k) => current.fields[k] ?? '')), main.template.name);
     try {
       const r = await api.sendTemplate({ contactId: current.id });
-      if (r.status === 'failed') failPending(id, 'WhatsApp could not send the template.');
+      if (r.status === 'failed') dropPending(id);
     } catch (e) {
       failPending(id, e instanceof Error ? e.message : 'Could not send');
     }
