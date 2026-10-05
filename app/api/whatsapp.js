@@ -4,8 +4,6 @@
 // Settings (Vercel environment variables): WA_VERIFY_TOKEN, optional WA_APP_SECRET (checks Meta's signature),
 // and FIREBASE_SERVICE_ACCOUNT (needed to save events).
 const crypto = require('node:crypto');
-const { handleWebhook, verifySignature } = require('./_core/webhook.js');
-const { makeDeps, originOf, readBody, ensureAdmin } = require('./_lib.js');
 
 const same = (a, b) => {
   const x = Buffer.from(String(a));
@@ -32,6 +30,9 @@ module.exports = async (req, res) => {
 
   if (req.method === 'POST') {
     try {
+      // loaded only here, so Meta's GET verification above never depends on the database code
+      const { handleWebhook, verifySignature } = require('./_core/webhook.js');
+      const { makeDeps, originOf, readBody, ensureAdmin } = require('./_lib.js');
       const raw = await readBody(req);
       if (!verifySignature(raw, req.headers['x-hub-signature-256'], process.env.WA_APP_SECRET || '')) return send(401, 'Bad signature');
       ensureAdmin();

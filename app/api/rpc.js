@@ -1,7 +1,14 @@
 // Every call the app makes: POST /api/rpc  { fn, data }  with the Firebase ID token in the Authorization header.
-const { handleRpc } = require('./_core/rpc.js');
-const { isConfigured } = require('./_core/admin.js');
-const { ensureAdmin, makeDeps, originOf, readBody, json, fail, authUid } = require('./_lib.js');
+// If something cannot even load, the answer says so (instead of an empty "500").
+let handleRpc, isConfigured, ensureAdmin, makeDeps, originOf, readBody, json, fail, authUid, loadError;
+try {
+  ({ handleRpc } = require('./_core/rpc.js'));
+  ({ isConfigured } = require('./_core/admin.js'));
+  ({ ensureAdmin, makeDeps, originOf, readBody, json, fail, authUid } = require('./_lib.js'));
+} catch (e) {
+  loadError = e;
+}
+const hint = (e) => `${(e && (e.code || e.name)) || 'Error'}: ${String((e && e.message) || e).replace(/\s+/g, ' ').slice(0, 200)}`;
 
 // Open https://<site>/api/rpc in the browser to see whether the server can reach the database.
 async function health() {
@@ -19,6 +26,11 @@ async function health() {
 }
 
 module.exports = async (req, res) => {
+  if (loadError) {
+    res.statusCode = 500;
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    return res.end(JSON.stringify({ error: { code: 'internal', message: 'Server could not start.', detail: hint(loadError) } }));
+  }
   if (req.method === 'GET') return json(res, 200, await health());
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST');

@@ -22,7 +22,8 @@ async function call<I, O>(fn: string, data?: I): Promise<O> {
     throw new Error('Cannot reach the server. Check your internet and try again.');
   }
   let body: any = null;
-  try { body = await res.json(); } catch { /* not json */ }
+  let raw = '';
+  try { raw = await res.text(); body = JSON.parse(raw); } catch { /* not json */ }
   if (res.ok) return body?.result as O;
   const msg: string = body?.error?.message ?? '';
   if (msg === NOT_CONFIGURED) {
@@ -30,7 +31,8 @@ async function call<I, O>(fn: string, data?: I): Promise<O> {
   }
   if (res.status === 401) throw new Error('Your session expired. Please log in again.');
   if (res.status === 404 && !msg) throw new Error('The server API was not found. Please redeploy the app.');
-  const detail: string = body?.error?.detail ?? '';
+  // when the server did not answer with our JSON, show the status so the real cause can be found
+  const detail: string = body?.error?.detail ?? (body ? '' : `HTTP ${res.status} ${raw.replace(/\s+/g, ' ').slice(0, 100)}`);
   throw new Error((msg || 'Something went wrong on our side. Please try again.') + (detail ? ` (${detail})` : ''));
 }
 
