@@ -2,6 +2,7 @@
 # Publishes the database rules, indexes and backend functions to Firebase in one go.
 #
 # Easiest way (no installs): open https://console.cloud.google.com, click the ">_" Cloud Shell icon, then run
+#   (optional) export WA_VERIFY_TOKEN='your-own-token'   # otherwise a random one is created
 #   git clone -b claude/whatsapp-patient-messaging-frontend-ktdy6d https://github.com/alijawad8586/Bussiness && cd Bussiness && ./deploy.sh
 #
 # Needs: the Blaze (pay-as-you-go) plan on the Firebase project, and Node.js 20+.
@@ -20,12 +21,23 @@ if ! $FB projects:list >/dev/null 2>&1; then
 fi
 
 say "2/5 Backend settings (functions/.env)"
-if [ ! -f functions/.env ]; then
-  TOKEN="$(head -c 48 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 32)"
-  printf 'WA_VERIFY_TOKEN=%s\nWA_APP_SECRET=%s\n' "$TOKEN" "${WA_APP_SECRET:-}" > functions/.env
-  echo "Created functions/.env with a new random verify token."
-else
-  echo "Using the existing functions/.env"
+touch functions/.env
+# set_var KEY VALUE: writes or replaces one line in functions/.env
+set_var() {
+  { grep -v "^$1=" functions/.env || true; printf '%s=%s\n' "$1" "$2"; } > functions/.env.tmp
+  mv functions/.env.tmp functions/.env
+}
+if [ -n "${WA_VERIFY_TOKEN:-}" ]; then
+  set_var WA_VERIFY_TOKEN "$WA_VERIFY_TOKEN"
+  echo "Using the verify token you provided."
+elif ! grep -q '^WA_VERIFY_TOKEN=' functions/.env; then
+  set_var WA_VERIFY_TOKEN "$(head -c 48 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 32)"
+  echo "Created a new random verify token."
+fi
+if [ -n "${WA_APP_SECRET:-}" ]; then
+  set_var WA_APP_SECRET "$WA_APP_SECRET"
+elif ! grep -q '^WA_APP_SECRET=' functions/.env; then
+  set_var WA_APP_SECRET ""
 fi
 VERIFY="$(grep '^WA_VERIFY_TOKEN=' functions/.env | cut -d= -f2-)"
 
