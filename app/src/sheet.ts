@@ -18,6 +18,19 @@ export function headerNames(raw: unknown[]): string[] {
   });
 }
 
+/**
+ * Real sheets often start with a title ("Clinic Leads Dashboard") or blank lines before the column names.
+ * The header is the first row that is about as full as the fullest of the first rows.
+ */
+export function findHeaderRow(rows: string[][]): number {
+  const count = (r: string[]) => r.filter((c) => c !== '').length;
+  const head = rows.slice(0, 15);
+  const most = Math.max(0, ...head.map(count));
+  if (most < 2) return 0;
+  const i = head.findIndex((r) => count(r) >= Math.ceil(most * 0.6) && count(r) >= 2);
+  return i < 0 ? 0 : i;
+}
+
 /** Opens the file picker and reads a CSV or Excel file. Returns null if the user cancels. */
 export async function pickSheet(): Promise<PickedSheet | null> {
   const res = await DocumentPicker.getDocumentAsync({
@@ -31,7 +44,8 @@ export async function pickSheet(): Promise<PickedSheet | null> {
   const first = wb.Sheets[wb.SheetNames[0]];
   // raw: false keeps phone numbers as text exactly as they look in the file
   const raw: unknown[][] = XLSX.utils.sheet_to_json(first, { header: 1, defval: '', raw: false });
-  const rows = raw.slice(0, MAX_ROWS + 1).map((r) => r.map(clean));
+  const all = raw.map((r) => r.map(clean));
+  const rows = all.slice(findHeaderRow(all), undefined).slice(0, MAX_ROWS + 1);
   if (rows.length < 2) throw new Error('The file needs a header row and at least one patient.');
   return { name: f.name, rows, columns: headerNames(rows[0]) };
 }
