@@ -85,7 +85,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     setMain(DEFAULT_MAIN); setServer({}); setContacts([]); setCampaigns([]); setLastSheet(null); setDataError(null);
     if (!uid) return;
     const base = `users/${uid}`;
-    const fail = (e: Error) => { console.error(e); setDataError(e.message); };
+    // If the first read fails (for example the rules are not deployed yet) stop the spinner and show why.
+    const fail = (e: Error & { code?: string }) => { console.error(e); setDataError(e.code === 'permission-denied' ? 'Missing or insufficient permissions.' : e.message); setLoaded(true); };
     const unsubs = [
       onSnapshot(doc(db, `${base}/settings/main`), (s) => setMain({ ...DEFAULT_MAIN, ...(s.data() as Partial<MainSettings> | undefined), mapping: { ...DEFAULT_MAIN.mapping, ...(s.data()?.mapping ?? {}) } }), fail),
       onSnapshot(doc(db, `${base}/settings/server`), (s) => { setServer((s.data() as ServerSettings | undefined) ?? {}); setLoaded(true); }, fail),

@@ -3,6 +3,7 @@ import { ActivityIndicator, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { StoreProvider, useStore } from './src/store';
+import { Button, Card, T } from './src/components/ui';
 import { colors } from './src/theme';
 import { Toast } from './src/components/Toast';
 import Auth from './src/screens/Auth';
@@ -14,8 +15,32 @@ import Reports from './src/screens/Reports';
 import ReportDetail from './src/screens/ReportDetail';
 import Settings from './src/screens/Settings';
 
+/** Shown when the database exists but its security rules are not deployed yet. */
+function SetupHelp() {
+  const { logOut } = useStore();
+  return (
+    <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.bg, padding: 24 }}>
+      <Card style={{ maxWidth: 520, gap: 14 }}>
+        <T size={20} weight="700">One last setup step</T>
+        <T color={colors.muted} style={{ lineHeight: 22 }}>
+          Your database is ready, but its security rules have not been published yet, so the app is not allowed to read it.
+          Run this once in the project folder:
+        </T>
+        <View style={{ backgroundColor: colors.tint, borderRadius: 8, padding: 12 }}>
+          <T size={13} color={colors.dark}>firebase deploy --only firestore</T>
+        </View>
+        <T size={13} color={colors.muted}>This publishes firestore.rules and firestore.indexes.json. Then reload this page.</T>
+        <View style={{ flexDirection: 'row', gap: 10 }}>
+          <Button kind="primary" label="Reload" onPress={() => { if (typeof window !== 'undefined') window.location.reload(); }} />
+          <Button label="Log out" onPress={logOut} />
+        </View>
+      </Card>
+    </View>
+  );
+}
+
 function Router() {
-  const { authReady, user, loaded, server, route } = useStore();
+  const { authReady, user, loaded, server, route, dataError } = useStore();
   if (!authReady || (user && !loaded)) {
     return (
       <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.bg }}>
@@ -24,6 +49,7 @@ function Router() {
     );
   }
   if (!user) return <Auth />;
+  if (dataError && !server.whatsapp && /permission|PERMISSION/i.test(dataError)) return <SetupHelp />;
   // first time: WhatsApp must be connected before anything else
   if (!server.whatsapp) return <Connect canCancel={false} />;
   switch (route.name) {
