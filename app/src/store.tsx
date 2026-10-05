@@ -1,7 +1,9 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { onAuthStateChanged, signOut, type User as FbUser } from 'firebase/auth';
 import { collection, doc, limit, onSnapshot, orderBy, query, setDoc, type DocumentData, type QuerySnapshot } from 'firebase/firestore';
+import { Platform } from 'react-native';
 import { auth, db } from './firebase';
+import { recordConsent } from './privacy';
 import { Campaign, Contact, DEFAULT_MAIN, MainSettings, ms, ServerSettings, SheetInfo } from './types';
 
 export type Route =
@@ -36,6 +38,14 @@ interface Store {
   campaigns: Campaign[];
   lastSheet: SheetInfo | null;
   unreadCount: number;
+  /** the latest privacy policy this user accepted (null = never) */
+  consent: { version: string; acceptedAt: number | null } | null;
+  consentLoaded: boolean;
+  acceptPrivacy: () => Promise<void>;
+  /** the public privacy page can be opened without signing in (web address /privacy) */
+  publicPage: 'privacy' | null;
+  openPrivacy: () => void;
+  closePrivacy: () => void;
   /** a problem reading data (for example a missing index), shown as a banner */
   dataError: string | null;
 }
@@ -74,20 +84,40 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [lastSheet, setLastSheet] = useState<SheetInfo | null>(null);
   const [dataError, setDataError] = useState<string | null>(null);
+  const [consent, setConsent] = useState<Store['consent']>(null);
+  const [consentLoaded, setConsentLoaded] = useState(false);
+  const [publicPage, setPublicPage] = useState<'privacy' | null>(() => (Platform.OS === 'web' && window.location.pathname.replace(/\/+$/, '') === '/privacy' ? 'privacy' : null));
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Keep the page address (/privacy) and the screen in sync on the web
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const onPop = () => setPublicPage(window.location.pathname.replace(/\/+$/, '') === '/privacy' ? 'privacy' : null);
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
+  const openPrivacy = useCallback(() => {
+    if (Platform.OS === 'web') window.history.pushState({}, '', '/privacy');
+    setPublicPage('privacy');
+  }, []);
+  const closePrivacy = useCallback(() => {
+    if (Platform.OS === 'web') window.history.pushState({}, '', '/');
+    setPublicPage(null);
+  }, []);
 
   useEffect(() => onAuthStateChanged(auth, (u) => { setUser(u ? toUser(u) : null); setAuthReady(true); }), []);
 
   // Live data for the signed-in user. Everything below updates by itself when the backend writes.
   const uid = user?.uid;
   useEffect(() => {
-    setLoaded(false);
+    setLoaded(false); setConsent(null); setConsentLoaded(false);
     setMain(DEFAULT_MAIN); setServer({}); setContacts([]); setCampaigns([]); setLastSheet(null); setDataError(null);
     if (!uid) return;
     const base = `users/${uid}`;
     // If the first read fails (for example the rules are not deployed yet) stop the spinner and show why.
     const fail = (e: Error & { code?: string }) => { console.error(e); setDataError(e.code === 'permission-denied' ? 'Missing or insufficient permissions.' : e.message); setLoaded(true); };
     const unsubs = [
+      onSnapshot(doc(db, `privacy/${uid}`), (s) => { const d = s.data(); setConsent(d ? { version: d.version, acceptedAt: ms(d.acceptedAt) } : null); setConsentLoaded(true); }, (e) => { console.error(e); setConsentLoaded(true); }),
       onSnapshot(doc(db, `${base}/settings/main`), (s) => setMain({ ...DEFAULT_MAIN, ...(s.data() as Partial<MainSettings> | undefined), mapping: { ...DEFAULT_MAIN.mapping, ...(s.data()?.mapping ?? {}) } }), fail),
       onSnapshot(doc(db, `${base}/settings/server`), (s) => { setServer((s.data() as ServerSettings | undefined) ?? {}); setLoaded(true); }, fail),
       onSnapshot(query(collection(db, `${base}/contacts`), orderBy('lastMessageAt', 'desc'), limit(500)), (s: QuerySnapshot) => setContacts(s.docs.map((d) => contactOf(d.id, d.data()))), fail),
@@ -111,13 +141,17 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     await setDoc(doc(db, `users/${uid}/settings/main`), { ...main, ...patch });
   }, [uid, main]);
 
+  const acceptPrivacy = useCallback(async () => {
+    if (uid) await recordConsent(uid, auth.currentUser?.email ?? '');
+  }, [uid]);
+
   const logOut = useCallback(() => { signOut(auth).catch(() => {}); setRoute({ name: 'dashboard' }); }, []);
 
   const unreadCount = useMemo(() => contacts.filter((c) => c.unread > 0).length, [contacts]);
 
   const value = useMemo<Store>(
-    () => ({ authReady, user, logOut, route, go: setRoute, toast, showToast, main, saveMain, server, loaded, contacts, campaigns, lastSheet, unreadCount, dataError }),
-    [authReady, user, logOut, route, toast, showToast, main, saveMain, server, loaded, contacts, campaigns, lastSheet, unreadCount, dataError],
+    () => ({ authReady, user, logOut, route, go: setRoute, toast, showToast, main, saveMain, server, loaded, contacts, campaigns, lastSheet, unreadCount, dataError, consent, consentLoaded, acceptPrivacy, publicPage, openPrivacy, closePrivacy }),
+    [authReady, user, logOut, route, toast, showToast, main, saveMain, server, loaded, contacts, campaigns, lastSheet, unreadCount, dataError, consent, consentLoaded, acceptPrivacy, publicPage, openPrivacy, closePrivacy],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

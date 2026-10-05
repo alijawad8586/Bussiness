@@ -54,6 +54,26 @@ service cloud.firestore {
       }
     }
 
+    // Privacy policy acceptance. A user can only record their own acceptance, with the server's time.
+    // Each version gets a permanent record that can never be changed or deleted.
+    match /privacy/{uid} {
+      allow read: if isOwner(uid);
+      allow create, update: if isOwner(uid)
+        && request.resource.data.keys().hasOnly(['version', 'acceptedAt', 'email'])
+        && request.resource.data.version is string
+        && request.resource.data.email is string
+        && request.resource.data.acceptedAt == request.time;
+
+      match /accepted/{version} {
+        allow read: if isOwner(uid);
+        allow create: if isOwner(uid)
+          && request.resource.data.keys().hasOnly(['version', 'acceptedAt', 'email'])
+          && request.resource.data.version == version
+          && request.resource.data.email is string
+          && request.resource.data.acceptedAt == request.time;
+      }
+    }
+
     // Maps a WhatsApp number to its owner. Server only.
     match /phoneNumbers/{id} {
       allow read, write: if false;

@@ -41,10 +41,17 @@ Everything belongs to one user: `users/{uid}/...`
 | `contacts/{phone}` | server (app may only set `unread: 0`) | one patient. **The id is the phone number**, so a number is never stored twice |
 | `campaigns/{id}` | server | one sending run with live counters: `stats`, `byDoctor`, `failReasons`, `timeline` |
 | `messages/{id}` | server | every message in and out: status, error code and plain-language hint, WhatsApp id, attempts |
+| `privacy/{uid}` and `privacy/{uid}/accepted/{version}` | app (own doc only, server time) | which privacy policy version the user accepted and when. The per-version records can never be edited or deleted |
 | `phoneNumbers/{phoneNumberId}` | server | lets the webhook find which user owns a WhatsApp number |
 
 Message status: `queued → sent → delivered → read`, or `failed` / `not_on_whatsapp` (final).
 Counters are changed in one place only (`applyTransition`), inside a transaction, and never go backwards.
+
+## Privacy policy
+
+A public page at `/privacy` (needs no sign-in; use this URL for Meta and Google app setup). Text and version live in `app/src/legal.ts`.
+Signing up needs the checkbox; Google and existing users see a consent screen once. When you change the text, bump `POLICY_VERSION`
+and everyone is asked to accept again. **Before going live, set `COMPANY.name` and `COMPANY.contactEmail` in `legal.ts`** and have the text reviewed by a lawyer.
 
 ## Error handling
 

@@ -14,6 +14,9 @@ import Messages from './src/screens/Messages';
 import Reports from './src/screens/Reports';
 import ReportDetail from './src/screens/ReportDetail';
 import Settings from './src/screens/Settings';
+import Privacy from './src/screens/Privacy';
+import Consent from './src/screens/Consent';
+import { POLICY_VERSION } from './src/legal';
 
 /** Shown when the database exists but its security rules are not deployed yet. */
 function SetupHelp() {
@@ -40,8 +43,10 @@ function SetupHelp() {
 }
 
 function Router() {
-  const { authReady, user, loaded, server, route, dataError } = useStore();
-  if (!authReady || (user && !loaded)) {
+  const { authReady, user, loaded, server, route, dataError, consent, consentLoaded, publicPage, closePrivacy } = useStore();
+  // The privacy policy is public: it opens without signing in
+  if (publicPage === 'privacy') return <Privacy onBack={closePrivacy} />;
+  if (!authReady || (user && (!loaded || !consentLoaded))) {
     return (
       <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.bg }}>
         <ActivityIndicator color={colors.primary} />
@@ -49,6 +54,7 @@ function Router() {
     );
   }
   if (!user) return <Auth />;
+  if (consent?.version !== POLICY_VERSION) return <Consent />;
   if (dataError && !server.whatsapp && /permission|PERMISSION/i.test(dataError)) return <SetupHelp />;
   // first time: WhatsApp must be connected before anything else
   if (!server.whatsapp) return <Connect canCancel={false} />;

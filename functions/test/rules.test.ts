@@ -1,7 +1,7 @@
 import test, { after, before } from 'node:test';
 import { readFileSync } from 'node:fs';
 import { assertFails, assertSucceeds, initializeTestEnvironment, type RulesTestEnvironment } from '@firebase/rules-unit-testing';
-import { doc, getDoc, setDoc, updateDoc, deleteDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc, updateDoc, deleteDoc, serverTimestamp, Timestamp } from 'firebase/firestore';
 
 let env: RulesTestEnvironment;
 before(async () => {
@@ -72,4 +72,24 @@ test('profile accepts only expected fields', async () => {
   await assertSucceeds(setDoc(doc(alice(), 'users/alice'), { name: 'Alice', email: 'a@b.c' }));
   await assertFails(setDoc(doc(alice(), 'users/alice'), { name: 'Alice', isAdmin: true }));
   await assertFails(setDoc(doc(bob(), 'users/alice'), { name: 'Bob' }));
+});
+
+test('privacy acceptance: only your own, with server time, and history cannot be changed', async () => {
+  const mine = { version: '2026-10-05', acceptedAt: serverTimestamp(), email: 'a@b.c' };
+  await assertSucceeds(setDoc(doc(alice(), 'privacy/alice'), mine));
+  await assertSucceeds(setDoc(doc(alice(), 'privacy/alice/accepted/2026-10-05'), mine));
+  await assertSucceeds(getDoc(doc(alice(), 'privacy/alice')));
+  await assertSucceeds(getDoc(doc(alice(), 'privacy/alice/accepted/2026-10-05')));
+  // not for someone else, not readable by others
+  await assertFails(setDoc(doc(bob(), 'privacy/alice'), mine));
+  await assertFails(getDoc(doc(bob(), 'privacy/alice')));
+  await assertFails(getDoc(doc(anon(), 'privacy/alice')));
+  // cannot fake the time or add fields
+  await assertFails(setDoc(doc(alice(), 'privacy/alice'), { ...mine, acceptedAt: Timestamp.fromDate(new Date('2020-01-01')) }));
+  await assertFails(setDoc(doc(alice(), 'privacy/alice'), { ...mine, isAdmin: true }));
+  await assertFails(setDoc(doc(alice(), 'privacy/alice'), { ...mine, version: 5 }));
+  // history: the version in the document must match its id, and it can never be edited or deleted
+  await assertFails(setDoc(doc(alice(), 'privacy/alice/accepted/2099-01-01'), mine));
+  await assertFails(setDoc(doc(alice(), 'privacy/alice/accepted/2026-10-05'), mine));
+  await assertFails(deleteDoc(doc(alice(), 'privacy/alice/accepted/2026-10-05')));
 });

@@ -5,7 +5,9 @@ import { doc, serverTimestamp, setDoc } from 'firebase/firestore';
 import { auth, db } from '../firebase';
 import { colors, font } from '../theme';
 import { AuthLayout } from '../components/AuthLayout';
-import { Button, Chip, Field, Icon, T } from '../components/ui';
+import { Button, Check, Chip, Field, Icon, T } from '../components/ui';
+import { recordConsent } from '../privacy';
+import { useStore } from '../store';
 
 /** Firebase error codes in plain words */
 function explain(e: unknown) {
@@ -33,6 +35,8 @@ async function saveProfile(uid: string, name: string, email: string) {
 }
 
 export default function Auth() {
+  const { openPrivacy } = useStore();
+  const [agree, setAgree] = useState(false);
   const [mode, setMode] = useState<'login' | 'signup'>('login');
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -45,12 +49,14 @@ export default function Auth() {
     setError(''); setInfo('');
     if (!/^\S+@\S+\.\S+$/.test(email.trim())) return setError('Enter a valid email address.');
     if (password.length < 6) return setError('Password must be at least 6 characters.');
+    if (mode === 'signup' && !agree) return setError('Please accept the Privacy Policy to create an account.');
     setBusy(true);
     try {
       if (mode === 'signup') {
         const cred = await createUserWithEmailAndPassword(auth, email.trim(), password);
         if (name.trim()) await updateProfile(cred.user, { displayName: name.trim() });
         await saveProfile(cred.user.uid, name.trim() || email.trim(), email.trim());
+        await recordConsent(cred.user.uid, email.trim()).catch(() => {}); // if this fails, the consent screen asks again
       } else {
         const cred = await signInWithEmailAndPassword(auth, email.trim(), password);
         await saveProfile(cred.user.uid, cred.user.displayName || email.trim(), email.trim());
@@ -99,6 +105,11 @@ export default function Auth() {
       {mode === 'signup' ? <Field label="Name" icon="user" placeholder="Your name" value={name} onChangeText={setName} autoComplete="name" /> : null}
       <Field label="Email" icon="mail" placeholder="you@clinic.com" value={email} onChangeText={setEmail} autoCapitalize="none" keyboardType="email-address" autoComplete="email" />
       <Field label="Password" icon="lock" placeholder="At least 6 characters" value={password} onChangeText={setPassword} secureTextEntry autoCapitalize="none" onSubmitEditing={submit} />
+      {mode === 'signup' ? (
+        <Check checked={agree} onChange={setAgree}>
+          <T size={13} style={{ lineHeight: 19 }}>I agree to the <T size={13} weight={font.semi} color={colors.primary} onPress={openPrivacy}>Privacy Policy</T></T>
+        </Check>
+      ) : null}
       {error ? <T size={13} color={colors.danger}>{error}</T> : null}
       {info ? <T size={13} color="#15803d">{info}</T> : null}
       <Button kind="primary" label={busy ? 'Please wait…' : mode === 'login' ? 'Login' : 'Create account'} onPress={submit} disabled={busy} style={{ paddingVertical: 14 }} />
@@ -111,7 +122,7 @@ export default function Auth() {
       <Button label="Continue with Google" icon="globe" onPress={google} disabled={busy} style={{ paddingVertical: 12 }} />
       <View style={{ flexDirection: 'row', gap: 8 }}>
         <Icon name="info" size={16} color={colors.muted} />
-        <T size={12} color={colors.muted} style={{ flex: 1, lineHeight: 18 }}>Your data is stored securely in your own CareReach account.</T>
+        <T size={12} color={colors.muted} style={{ flex: 1, lineHeight: 18 }}>Your data is stored securely in your own CareReach account. <T size={12} weight={font.semi} color={colors.primary} onPress={openPrivacy}>Privacy Policy</T></T>
       </View>
     </AuthLayout>
   );

@@ -22,7 +22,7 @@ const PROVIDERS = [
 const tplKey = (t: TemplateRef) => `${t.name}|${t.language}`;
 
 export default function Settings({ initialTab = 'source' }: { initialTab?: 'source' | 'agent' }) {
-  const { main, saveMain, server, lastSheet, go, showToast, user, logOut } = useStore();
+  const { go, user, logOut, consent, openPrivacy } = useStore();
   const { wide } = useLayout();
   const [tab, setTab] = useState<'source' | 'agent'>(initialTab);
 
@@ -38,6 +38,7 @@ export default function Settings({ initialTab = 'source' }: { initialTab?: 'sour
         <View style={{ flex: 1 }}>
           <T weight={font.semi}>{user?.name}</T>
           <T size={13} color={colors.muted}>{user?.email}</T>
+          <T size={12} color={colors.primary} onPress={openPrivacy}>{`Privacy Policy${consent?.acceptedAt ? ` · accepted ${new Date(consent.acceptedAt).toLocaleDateString()}` : ''}`}</T>
         </View>
         <Button label="Reconnect WhatsApp" icon="link" onPress={() => go({ name: 'connect' })} />
         <Button label="Log out" icon="log-out" onPress={logOut} />

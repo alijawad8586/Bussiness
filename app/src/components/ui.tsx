@@ -175,6 +175,17 @@ export function Input(props: TextInputProps) {
   return <TextInput placeholderTextColor={colors.placeholder} {...props} style={[s.plainInput, props.style]} />;
 }
 
+export function Check({ checked, onChange, children }: { checked: boolean; onChange: (v: boolean) => void; children: React.ReactNode }) {
+  return (
+    <Pressable onPress={() => onChange(!checked)} accessibilityRole="checkbox" accessibilityState={{ checked }} style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}>
+      <View style={{ width: 20, height: 20, borderRadius: 5, borderWidth: 1.5, borderColor: checked ? colors.primary : colors.placeholder, backgroundColor: checked ? colors.primary : '#fff', alignItems: 'center', justifyContent: 'center', marginTop: 1 }}>
+        {checked ? <Icon name="check" size={14} color="#fff" /> : null}
+      </View>
+      <View style={{ flex: 1 }}>{children}</View>
+    </Pressable>
+  );
+}
+
 export function Toggle({ value, onChange }: { value: boolean; onChange: (v: boolean) => void }) {
   return (
     <Switch
