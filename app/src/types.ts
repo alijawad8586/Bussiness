@@ -36,6 +36,7 @@ export interface Contact {
   lastMessageAt: number | null;
   lastInboundAt: number | null;
   lastStatus: MsgStatus | null;
+  whatsapp: 'ok' | 'invalid' | 'unknown';
 }
 
 export interface Message {

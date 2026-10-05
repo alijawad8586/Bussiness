@@ -59,7 +59,7 @@ function contactOf(id: string, d: DocumentData): Contact {
   return {
     id, phone: d.phone ?? id, name: d.name ?? '', doctor: d.doctor ?? '', fields: d.fields ?? {}, rowNumber: d.rowNumber ?? null,
     optOut: !!d.optOut, needsHuman: !!d.needsHuman, unread: d.unread ?? 0, lastMessageText: d.lastMessageText ?? '',
-    lastMessageAt: ms(d.lastMessageAt), lastInboundAt: ms(d.lastInboundAt), lastStatus: d.lastStatus ?? null,
+    lastMessageAt: ms(d.lastMessageAt), lastInboundAt: ms(d.lastInboundAt), lastStatus: d.lastStatus ?? null, whatsapp: d.whatsapp === 'invalid' ? 'invalid' : d.whatsapp === 'ok' ? 'ok' : 'unknown',
   };
 }
 

@@ -2,7 +2,10 @@ import { FieldValue } from 'firebase-admin/firestore';
 import { AI_PROVIDERS, assertSafeBaseUrl, AiError } from './aiClient.js';
 import { classifyWaError } from './waErrors.js';
 import { db, loadSecrets, loadServer, mainRef, phoneIndexRef, requireWhatsApp, secretsRef, serverRef, type Deps } from './repo.js';
-import { AppError } from './types.js';
+import { AppError, type ContactDoc } from './types.js';
+import { normalizePhone } from './phone.js';
+import { Timestamp } from 'firebase-admin/firestore';
+import { col } from './repo.js';
 
 const str = (v: unknown, max = 500) => String(v ?? '').trim().slice(0, max);
 /** Meta IDs are plain numbers. Spaces, +, - and similar are ignored. */
@@ -92,4 +95,34 @@ export async function testAgent(uid: string, deps: Deps) {
     const msg = e instanceof Error ? e.message : 'Request failed';
     throw new AppError('failed-precondition', /^(401|403)/.test(msg) ? 'The AI rejected this API key.' : `The AI request failed: ${msg}`);
   }
+}
+
+/**
+ * Starts a chat with a number typed by hand: country code + number (+ optional name).
+ * Creates the contact when it is new. Nothing is sent yet. WhatsApp itself decides whether the number
+ * exists: if it does not, the first message comes back as "Not on WhatsApp".
+ */
+export async function startChat(uid: string, input: { countryCode: string; phone: string; name?: string }, deps: Deps) {
+  const cc = digits(input.countryCode, 4);
+  const national = digits(input.phone, 15).replace(/^0+/, '');
+  if (!cc) throw new AppError('invalid-argument', 'Choose the country code.');
+  if (!national) throw new AppError('invalid-argument', 'Enter the phone number.');
+  const p = normalizePhone(`+${cc}${national}`);
+  if (!p.ok) throw new AppError('invalid-argument', 'This is not a valid phone number. Check the country code and the number.');
+  const name = str(input.name, 80);
+  const ref = col(uid, 'contacts').doc(p.digits);
+  const now = Timestamp.fromDate(deps.now());
+  const snap = await ref.get();
+  if (snap.exists) {
+    if (name && !snap.data()!.name) await ref.update({ name, updatedAt: now });
+    return { contactId: p.digits, created: false };
+  }
+  const doc: ContactDoc = {
+    phone: p.digits, name, doctor: '', fields: {}, sheetId: null, rowNumber: null, updatedAt: now,
+    whatsapp: 'unknown', optOut: false, needsHuman: false, unread: 0,
+    lastMessageText: '', lastMessageAt: null, lastInboundAt: null, lastStatus: null,
+    agentWindowStart: null, agentCount: 0, createdAt: now,
+  };
+  await ref.set(doc);
+  return { contactId: p.digits, created: true };
 }

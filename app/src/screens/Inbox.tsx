@@ -6,7 +6,8 @@ import { api } from '../api';
 import { db } from '../firebase';
 import { formatTime, phoneLabel, shortTime } from '../format';
 import { messageOf, userCol } from '../hooks';
-import { Avatar, Button, Card, Chip, CountBadge, Empty, Icon, MsgBadge, SearchBox, Sheet, T, Ticks, useLayout } from '../components/ui';
+import { Avatar, Button, Card, Chip, CountBadge, Empty, Field, Icon, MsgBadge, SearchBox, Select, Sheet, T, Ticks, useLayout } from '../components/ui';
+import { COUNTRIES, groupDigits } from '../countries';
 import { Shell } from '../components/Shell';
 import { Contact, Message, MsgStatus } from '../types';
 import { renderBody } from '../template';
@@ -39,17 +40,26 @@ function ConversationRow({ c, active, onPress }: { c: Contact; active: boolean; 
   );
 }
 
-function Details({ c, onViewMessages }: { c: Contact; onViewMessages: () => void }) {
+function Details({ c, onViewMessages, onClose }: { c: Contact; onViewMessages: () => void; onClose?: () => void }) {
   const row = (k: string, v: string) => <View style={{ gap: 5 }}><T size={12} weight={font.medium} color={colors.muted}>{k}</T><T weight={font.medium}>{v || '—'}</T></View>;
   return (
     <View style={{ gap: 18, flex: 1 }}>
+      {onClose ? (
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+          <T size={15} weight={font.semi}>Contact info</T>
+          <Pressable onPress={onClose} hitSlop={10} accessibilityRole="button" accessibilityLabel="Close contact info"><Icon name="x" size={20} color={colors.muted} /></Pressable>
+        </View>
+      ) : null}
       <View style={{ alignItems: 'center', gap: 10 }}>
         <Avatar name={c.name || c.phone} size={64} />
         <T size={17} weight={font.semi}>{c.name || 'Unknown patient'}</T>
         <T size={13} color={colors.muted}>{phoneLabel(c.phone)}</T>
       </View>
+      {row('Phone (WhatsApp)', phoneLabel(c.phone))}
       {row('Doctor', c.doctor)}
-      {row('Source', c.rowNumber ? `Uploaded sheet · row ${c.rowNumber}` : 'Started the chat themselves')}
+      {row('Source', c.rowNumber ? `Uploaded sheet · row ${c.rowNumber}` : c.lastInboundAt ? 'Started the chat themselves' : 'Added by hand')}
+      {c.lastInboundAt ? row('Last wrote to you', new Date(c.lastInboundAt).toLocaleString()) : null}
+      {c.whatsapp === 'invalid' ? <T size={13} weight={font.semi} color={colors.danger}>This number is not on WhatsApp</T> : null}
       {c.lastStatus ? <View style={{ gap: 5 }}><T size={12} weight={font.medium} color={colors.muted}>Last message status</T><MsgBadge status={c.lastStatus} /></View> : null}
       {c.optOut ? <T size={13} weight={font.semi} color={colors.danger}>Patient asked to stop messages</T> : null}
       <View style={{ flex: 1 }} />
@@ -76,9 +86,16 @@ export default function Inbox({ openId }: { openId?: string }) {
   const [busy, setBusy] = useState(false);
   const [tplOpen, setTplOpen] = useState(false);
   const [infoOpen, setInfoOpen] = useState(false);
+  const [panelOpen, setPanelOpen] = useState(true);
+  const [newOpen, setNewOpen] = useState(false);
+  const [cc, setCc] = useState('92');
+  const [ccOther, setCcOther] = useState('');
+  const [nat, setNat] = useState('');
+  const [newName, setNewName] = useState('');
   const listRef = useRef<FlatList>(null);
 
-  const chats = useMemo(() => contacts.filter((c) => c.lastMessageAt), [contacts]);
+  // a chat you just started shows up at once, even before the first message
+  const chats = useMemo(() => contacts.filter((c) => c.lastMessageAt || c.id === selected), [contacts, selected]);
   const current = contacts.find((c) => c.id === selected) ?? null;
   useEffect(() => { if (wide && !selected && chats[0]) setSelected(chats[0].id); }, [wide, selected, chats]);
 
@@ -137,6 +154,22 @@ export default function Inbox({ openId }: { openId?: string }) {
     }
   };
 
+  const code = cc === 'other' ? ccOther.replace(/\D/g, '') : cc;
+  const startNew = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const r = await api.startChat({ countryCode: code, phone: nat, name: newName });
+      setSelected(r.contactId);
+      setNewOpen(false); setNat(''); setNewName('');
+      showToast(r.created ? 'Chat ready. Send the template to start the conversation.' : 'This number is already in your contacts.');
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : 'Could not start the chat');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const tplPreview = main.template && current ? renderBody(main.template.body, main.varCols.map((k) => current.fields[k] ?? '')) : '';
   const showList = wide || !current;
   const showChat = wide || !!current;
@@ -145,7 +178,12 @@ export default function Inbox({ openId }: { openId?: string }) {
   const listPane = (
     <Card style={{ padding: 0, overflow: 'hidden', width: wide ? 360 : undefined, flex: wide ? undefined : 1 }}>
       <View style={{ padding: 16, gap: 12 }}>
-        <SearchBox value={q} onChangeText={setQ} placeholder="Search patient or phone number" />
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+          <View style={{ flex: 1 }}><SearchBox value={q} onChangeText={setQ} placeholder="Search patient or phone number" /></View>
+          <Pressable onPress={() => setNewOpen(true)} accessibilityRole="button" accessibilityLabel="New chat" style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' }}>
+            <Icon name="edit" size={18} color="#fff" />
+          </Pressable>
+        </View>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
           {(['All', 'Unread', 'Failed'] as Tab[]).map((t) => <Chip key={t} label={`${t} ${counts[t]}`} active={tab === t} onPress={() => setTab(t)} />)}
         </ScrollView>
@@ -170,7 +208,7 @@ export default function Inbox({ openId }: { openId?: string }) {
           <T size={12} color={colors.muted} numberOfLines={1}>{phoneLabel(current.phone)}{current.doctor ? `  ·  Patient of ${current.doctor}` : ''}</T>
         </View>
         {wide && current.lastStatus ? <MsgBadge status={current.lastStatus} /> : null}
-        {!xl ? <Pressable onPress={() => setInfoOpen(true)} hitSlop={10} accessibilityLabel="Patient details"><Icon name="info" size={20} color={colors.muted} /></Pressable> : null}
+        <Pressable onPress={() => (xl ? setPanelOpen((v) => !v) : setInfoOpen(true))} hitSlop={10} accessibilityRole="button" accessibilityLabel="Contact info"><Icon name="info" size={20} color={xl && panelOpen ? colors.primary : colors.muted} /></Pressable>
       </View>
 
       <FlatList
@@ -231,14 +269,13 @@ export default function Inbox({ openId }: { openId?: string }) {
     </Card>
   );
 
-  const details = current ? <Details c={current} onViewMessages={() => go({ name: 'messages', query: current.phone })} /> : null;
 
   return (
     <Shell title="WhatsApp Inbox" subtitle={`Send and receive patient messages · ${unreadCount} unread`} scroll={false}>
       <View style={{ flex: 1, flexDirection: 'row', gap: 16, height: boxH, minHeight: 0 }}>
         {showList ? listPane : null}
         {showChat ? chatPane : null}
-        {xl && current ? <Card style={{ width: 280, paddingVertical: 22 }}>{details}</Card> : null}
+        {xl && panelOpen && current ? <Card style={{ width: 300, paddingVertical: 18 }}><Details c={current} onViewMessages={() => go({ name: 'messages', query: current.phone })} onClose={() => setPanelOpen(false)} /></Card> : null}
       </View>
 
       <Sheet visible={tplOpen} onClose={() => setTplOpen(false)} title="Send the approved template">
@@ -255,6 +292,29 @@ export default function Inbox({ openId }: { openId?: string }) {
               <Button label="Open Settings" onPress={() => { setTplOpen(false); go({ name: 'settings' }); }} />
             </>
           )}
+        </View>
+      </Sheet>
+
+      <Sheet visible={newOpen} onClose={() => setNewOpen(false)} title="New chat">
+        <View style={{ padding: 10, gap: 14 }}>
+          <View style={{ gap: 8 }}>
+            <T size={13} weight={font.medium}>Country</T>
+            <Select
+              value={cc} label="Country code" height={44} onChange={setCc}
+              options={[...COUNTRIES.map((c) => ({ value: c.code, label: `${c.flag}  ${c.name}  (+${c.code})` })), { value: 'other', label: 'Other country code…' }]}
+            />
+          </View>
+          {cc === 'other' ? <Field label="Country code" icon="globe" value={ccOther} onChangeText={(v) => setCcOther(v.replace(/\D/g, '').slice(0, 4))} keyboardType="phone-pad" placeholder="e.g. 49" /> : null}
+          <Field label="Phone number" icon="phone" value={groupDigits(nat)} onChangeText={(v) => setNat(v.replace(/\D/g, ''))} keyboardType="phone-pad" placeholder="58 614 1832" hint="Without the country code. A leading 0 is removed for you." />
+          <Field label="Name (optional)" icon="user" value={newName} onChangeText={setNewName} placeholder="Ali Jawad" />
+          {code && nat ? (
+            <View style={{ backgroundColor: colors.tint, borderRadius: 10, padding: 12, gap: 4 }}>
+              <T size={12} color={colors.muted}>WhatsApp number</T>
+              <T weight={font.semi}>+{code} {groupDigits(nat)}</T>
+            </View>
+          ) : null}
+          <T size={12} color={colors.muted}>WhatsApp tells us if the number exists when the first message is sent. If it does not, the chat shows “Not on WhatsApp”.</T>
+          <Button kind="primary" label={busy ? 'Please wait…' : 'Start chat'} icon="message-circle" onPress={startNew} disabled={busy || !code || !nat} />
         </View>
       </Sheet>
 

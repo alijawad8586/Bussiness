@@ -48,5 +48,6 @@ export const api = {
   startCampaign: (d: { sheetId: string }) => call<typeof d, { campaignId: string; total: number }>('startCampaign', d),
   campaignAction: (d: { campaignId: string; action: 'pause' | 'resume' | 'retryFailed' }) => call<typeof d, { count: number }>('campaignAction', d),
   sendManual: (d: { contactId: string; text: string }) => call<typeof d, { status: string }>('sendManual', d),
+  startChat: (d: { countryCode: string; phone: string; name?: string }) => call<typeof d, { contactId: string; created: boolean }>('startChat', d),
   sendTemplate: (d: { contactId: string }) => call<typeof d, { status: string }>('sendTemplate', d),
 };

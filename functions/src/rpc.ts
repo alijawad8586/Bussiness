@@ -1,7 +1,7 @@
 import { campaignAction, createCampaign, sendManual, sendTemplateToContact } from './messaging.js';
 import { col, loadMain, type Deps } from './repo.js';
 import { importSheet } from './sheetImport.js';
-import { connectWhatsApp, listTemplates, saveAgent, testAgent } from './setup.js';
+import { connectWhatsApp, listTemplates, saveAgent, startChat, testAgent } from './setup.js';
 import { AppError } from './types.js';
 
 /** Upload: create contacts from the sheet, then (if Auto-send is on) start sending. */
@@ -33,6 +33,7 @@ export async function handleRpc(fn: string, uid: string, data: any, deps: Deps):
       return createCampaign(uid, { sheetId: String(data.sheetId) }, deps);
     case 'campaignAction': return campaignAction(uid, data, deps);
     case 'sendManual': return sendManual(uid, data, deps);
+    case 'startChat': return startChat(uid, data, deps);
     case 'sendTemplate': return sendTemplateToContact(uid, data, deps);
     case 'kick': {
       // The app calls this while a report is open, so sending continues even if a worker stopped.

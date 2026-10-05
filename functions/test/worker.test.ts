@@ -69,3 +69,18 @@ test('rpc: createCampaign kicks a worker, unknown function is rejected, kick che
   await assert.rejects(handleRpc('nope', h.uid, {}, h.deps), /Unknown function/);
   assert.equal((await col(h.uid, 'messages').get()).size, 3);
 });
+
+test('startChat: country code + number makes one contact, no duplicates, rejects bad numbers', async () => {
+  const h = harness();
+  await seedUser(h);
+  const a: any = await handleRpc('startChat', h.uid, { countryCode: '+971', phone: '058 614 1832', name: 'Ali Jawad' }, h.deps);
+  assert.deepEqual(a, { contactId: '971586141832', created: true });
+  const c = (await col(h.uid, 'contacts').doc('971586141832').get()).data()!;
+  assert.equal(c.name, 'Ali Jawad');
+  assert.equal(c.lastMessageAt, null);
+  const b: any = await handleRpc('startChat', h.uid, { countryCode: '971', phone: '586141832' }, h.deps);
+  assert.deepEqual(b, { contactId: '971586141832', created: false });
+  await assert.rejects(handleRpc('startChat', h.uid, { countryCode: '971', phone: '12' }, h.deps), /valid phone/);
+  await assert.rejects(handleRpc('startChat', h.uid, { countryCode: '', phone: '586141832' }, h.deps), /country code/);
+  assert.equal(h.wa.calls.length, 0, 'nothing is sent when a chat is started');
+});
