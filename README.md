@@ -72,6 +72,13 @@ temporary AI errors retry, permanent ones leave the message unread for staff. Cu
 
 ## Set up (one time)
 
+**Fastest:** open <https://console.cloud.google.com>, click the `>_` **Cloud Shell** icon, and run:
+```bash
+git clone -b claude/whatsapp-patient-messaging-frontend-ktdy6d https://github.com/alijawad8586/Bussiness && cd Bussiness && ./deploy.sh
+```
+`deploy.sh` signs in, creates `functions/.env` with a random verify token, enables the Google services, deploys rules, indexes and functions,
+and prints the webhook URL and verify token for Meta. (The project must be on the Blaze plan.) The manual steps are below.
+
 1. **Firebase console** (project `new-app-8f5f3`)
    - Build → **Firestore Database** → create (production mode).
    - Build → **Authentication** → Sign-in method → turn on **Email/Password** and **Google**.
