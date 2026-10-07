@@ -104,6 +104,12 @@ export async function saveAgent(uid: string, input: { provider: string; apiKey?:
   if (model && available && available.length && !available.includes(model)) {
     throw new AppError('invalid-argument', `The model "${model}" is not available for this key. Leave the model empty and one is chosen for you.`);
   }
+  if (!model) {
+    // nothing typed: keep the model already in use (for example when only the on/off switch changes), if it still works
+    const server = await loadServer(uid);
+    const kept = server.agent?.provider === info.id && (!baseUrl || server.agent.baseUrl === baseUrl) ? server.agent.model : '';
+    if (kept && (!available || !available.length || available.includes(kept))) model = kept;
+  }
   if (!model) model = (available && pickModel(info.id, available)) || (info.id === 'custom' ? '' : info.model);
   if (!model) throw new AppError('invalid-argument', 'This provider did not list any model. Type the model name.');
 

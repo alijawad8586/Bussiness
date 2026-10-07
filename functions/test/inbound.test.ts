@@ -260,3 +260,19 @@ test('agent: the outcome is saved on the patient message (why it did or did not 
   await agentReply(h.uid, 'in_wamid.o2', h.deps, { lastAttempt: true });
   assert.equal((await col(h.uid, 'messages').doc('in_wamid.o2').get()).data()!.agentOutcome, 'disabled');
 });
+
+test('agent: switching it on or off keeps the model in use (also for providers with no model list)', async () => {
+  const h = harness();
+  await seedUser(h);
+  h.models = [];
+  await saveAgent(h.uid, { provider: 'custom', apiKey: 'good-key', baseUrl: 'https://api.example.com/v1', model: 'my-model', enabled: false }, h.deps);
+  const r = await saveAgent(h.uid, { provider: 'custom', baseUrl: 'https://api.example.com/v1', enabled: true }, h.deps);
+  assert.equal(r.model, 'my-model');
+  assert.equal((await mainRef(h.uid).get()).data()!.agentEnabled, true);
+
+  h.models = ['llama-3.1-8b-instant', 'qwen3-32b'];
+  await saveAgent(h.uid, { provider: 'groq', apiKey: 'gsk-good', enabled: false }, h.deps);
+  await serverRef(h.uid).set({ agent: { model: 'qwen3-32b' } }, { merge: true });
+  const r2 = await saveAgent(h.uid, { provider: 'groq', enabled: true }, h.deps);
+  assert.equal(r2.model, 'qwen3-32b', 'the model in use is kept when it still exists');
+});
