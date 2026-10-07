@@ -138,7 +138,9 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
   const saveMain = useCallback(async (patch: Partial<MainSettings>) => {
     if (!uid) return;
-    await setDoc(doc(db, `users/${uid}/settings/main`), { ...main, ...patch });
+    // The AI switch is saved by its own call, so this never writes agentEnabled (a stale copy could switch the agent off).
+    const { agentEnabled: _ignored, ...rest } = { ...main, ...patch };
+    await setDoc(doc(db, `users/${uid}/settings/main`), rest, { merge: true });
   }, [uid, main]);
 
   const acceptPrivacy = useCallback(async () => {

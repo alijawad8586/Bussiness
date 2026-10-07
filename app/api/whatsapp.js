@@ -38,7 +38,8 @@ module.exports = async (req, res) => {
       ensureAdmin();
       const { deps, runAgentJobs } = makeDeps(originOf(req));
       const r = await handleWebhook(JSON.parse(raw.toString('utf8') || '{}'), deps);
-      runAgentJobs();
+      // Answer the patient before replying to Meta when the AI is quick, so the reply is not cut off on serverless hosting.
+      await Promise.race([runAgentJobs(), new Promise((r) => setTimeout(r, 15000))]);
       // 500 makes Meta send the event again. Every write is idempotent, so repeats are safe.
       return send(r.failures ? 500 : 200, r.failures ? 'retry' : 'ok');
     } catch (e) {

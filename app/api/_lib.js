@@ -62,9 +62,10 @@ function makeDeps(origin) {
     },
     kick: (uid, campaignId) => kickWorker(origin, uid, campaignId),
   };
+  /** Starts the AI replies. They keep running after the response (waitUntil); the returned promise lets the caller wait a little too. */
   const runAgentJobs = () => {
-    if (!agentJobs.length) return;
-    waitUntil((async () => {
+    if (!agentJobs.length) return Promise.resolve();
+    const done = (async () => {
       for (const j of agentJobs) {
         for (let attempt = 0; attempt < 3; attempt++) {
           try {
@@ -76,7 +77,9 @@ function makeDeps(origin) {
           }
         }
       }
-    })());
+    })();
+    waitUntil(done);
+    return done;
   };
   return { deps, runAgentJobs };
 }

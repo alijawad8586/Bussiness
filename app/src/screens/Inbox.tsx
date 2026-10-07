@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { FlatList, Pressable, ScrollView, TextInput, View } from 'react-native';
-import { doc, limit, onSnapshot, orderBy, query, updateDoc, where } from 'firebase/firestore';
+import { doc, getDocsFromServer, limit, onSnapshot, query, updateDoc, where } from 'firebase/firestore';
 import { colors, font } from '../theme';
 import { api } from '../api';
 import { db } from '../firebase';
@@ -103,13 +103,25 @@ export default function Inbox({ openId }: { openId?: string }) {
     [saved, pending],
   );
 
-  // Live chat history for the open conversation
+  // Live chat history for the open conversation.
+  // No sorting in the query (so no special database index is needed): messages are sorted here.
+  const byTime = (docs: { id: string; data(): any }[]) => docs.map((d) => messageOf(d.id, d.data())).sort((a, b) => a.createdAt - b.createdAt);
+  const chatQuery = (uid: string, id: string) => query(userCol(uid, 'messages'), where('contactId', '==', id), limit(500));
+  const [chatError, setChatError] = useState('');
   useEffect(() => {
-    setSaved([]); setPending([]);
+    setSaved([]); setPending([]); setChatError('');
     if (!user || !selected) return;
-    return onSnapshot(query(userCol(user.uid, 'messages'), where('contactId', '==', selected), orderBy('createdAt', 'asc'), limit(300)),
-      (s) => setSaved(s.docs.map((d) => messageOf(d.id, d.data()))), (e) => showToast(/index/i.test(e.message) ? 'The chat needs a database index. Run: firebase deploy --only firestore:indexes' : e.message));
-  }, [user, selected, showToast]);
+    return onSnapshot(chatQuery(user.uid, selected), (s) => { setSaved(byTime(s.docs)); setChatError(''); }, (e) => setChatError(e.message));
+  }, [user, selected]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Safety net: whenever the conversation list shows something newer, read this chat from the server once more.
+  useEffect(() => {
+    if (!user || !selected || !current?.lastMessageAt) return;
+    const t = setTimeout(() => {
+      getDocsFromServer(chatQuery(user.uid, selected)).then((s) => { setSaved(byTime(s.docs)); setChatError(''); }).catch(() => {});
+    }, 700);
+    return () => clearTimeout(t);
+  }, [user, selected, current?.lastMessageAt]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Opening a chat marks it read
   useEffect(() => {
@@ -256,6 +268,7 @@ export default function Inbox({ openId }: { openId?: string }) {
         }}
       />
 
+      {chatError ? <View style={{ backgroundColor: '#fee2e2', paddingHorizontal: 16, paddingVertical: 8 }}><T size={12} color={colors.danger}>Could not load this chat: {chatError}</T></View> : null}
       {!inWindow && !current.optOut ? (
         <View style={{ backgroundColor: '#fef3c7', paddingHorizontal: 16, paddingVertical: 8 }}>
           <T size={12} color="#b45309">The patient has not written in the last 24 hours. WhatsApp only allows an approved template now.</T>
